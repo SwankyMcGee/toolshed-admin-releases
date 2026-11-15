@@ -188,6 +188,60 @@ fun AnalyticsScreen(
             }
         }
 
+        /* ---------- all ideas per tool (Tools hub) ---------- */
+
+        if (stats.byTool.isNotEmpty()) {
+            item {
+                Card {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = "Ideas per tool",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = c.text
+                        )
+                        Text(
+                            text = "Every idea that names a tool, plus tool ideas that mention it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.dim
+                        )
+                        HBars(
+                            data = stats.byTool,
+                            barColor = c.accent,
+                            trackColor = c.surface2,
+                            textColor = c.text
+                        )
+                    }
+                }
+            }
+        }
+
+        /* ---------- feature ideas per resource page ---------- */
+
+        if (stats.byResource.isNotEmpty()) {
+            item {
+                Card {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = "Feature ideas per resource page",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = c.text
+                        )
+                        Text(
+                            text = "Which tool's resources are being asked for — the closest the sheet gets to page-level analytics.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.dim
+                        )
+                        HBars(
+                            data = stats.byResource,
+                            barColor = c.accent,
+                            trackColor = c.surface2,
+                            textColor = c.text
+                        )
+                    }
+                }
+            }
+        }
+
         item {
             Text(
                 text = "Charts show what's in the inbox right now. For how fast ideas move from new to done, see the status-history note in expanding_the_project.md.",

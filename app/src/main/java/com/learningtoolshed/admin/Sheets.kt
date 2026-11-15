@@ -2,6 +2,7 @@ package com.learningtoolshed.admin
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -330,6 +331,7 @@ fun PaletteSheet(
                     .clip(RoundedCornerShape(10.dp))
                     .background(if (on) c.surface2 else c.surface)
                     .border(1.dp, if (on) c.accent else c.border, RoundedCornerShape(10.dp))
+                    .clickable { onPick(p.id) }
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)

@@ -19,6 +19,20 @@ import java.util.Calendar
    status history (see expanding_the_project.md, Option C).
    ============================================================ */
 
+/* The tools on the Tools hub (tools.html) and the resource pages
+   per tool (resources.html). Kept in sync with the site by hand —
+   if a tool or page is added on the site, add it here too. */
+private val TOOLS = listOf("Work Cycle Timer", "Math Playground", "The Ideas Engine")
+
+private val RESOURCES = listOf(
+    "Work Cycle Timer" to "Quick start",
+    "Work Cycle Timer" to "User guide",
+    "Work Cycle Timer" to "Settings reference",
+    "Work Cycle Timer" to "Troubleshooting",
+    "Work Cycle Timer" to "Scenarios",
+    "Work Cycle Timer" to "Glossary"
+)
+
 data class Bucket(val label: String, val count: Int)
 
 data class Analytics(
@@ -27,7 +41,9 @@ data class Analytics(
     val perWeek: List<Bucket>,        // oldest first, last 12 weeks
     val byType: List<Bucket>,         // Tool / Feature
     val byStatus: List<Bucket>,       // new / reading / planned / done / shelved
-    val topTools: List<Bucket>        // by feature ideas, biggest first
+    val topTools: List<Bucket>,       // by feature ideas, biggest first
+    val byTool: List<Bucket>,         // all ideas per tool (Tool + Feature)
+    val byResource: List<Bucket>      // feature ideas per resource page
 ) {
     val maxWeek: Int get() = perWeek.maxOfOrNull { it.count } ?: 1
     val maxTool: Int get() = topTools.maxOfOrNull { it.count } ?: 1
@@ -59,13 +75,41 @@ object Stats {
             .take(6)
             .map { Bucket(it.key, it.value) }
 
+        /* All ideas per tool — the Tools hub page's cards, ranked by
+           how many ideas mention them (feature ideas name the tool;
+           tool ideas are the tool themselves). */
+        val byTool = (TOOLS + ideas.mapNotNull { if (it.isFeature) it.tool else null })
+            .distinct()
+            .map { tool ->
+                val count = ideas.count { idea ->
+                    if (idea.isFeature) idea.tool.equals(tool, true)
+                    else idea.type.equals("Tool", true) && idea.idea.contains(tool, ignoreCase = true)
+                }
+                Bucket(tool, count)
+            }
+            .filter { it.count > 0 }
+            .sortedByDescending { it.count }
+
+        /* Feature ideas per resource page. The sheet's "Which tool"
+           is the tool, not the page — but the resource pages are
+           per-tool, so a feature idea for a tool counts as a feature
+           idea for that tool's resources. This is a proxy: "which
+           tool's resources need work" is the closest the sheet can
+           answer. */
+        val byResource = RESOURCES.map { (tool, page) ->
+            val count = ideas.count { it.isFeature && it.tool.equals(tool, true) }
+            Bucket(page, count)
+        }.filter { it.count > 0 }.sortedByDescending { it.count }
+
         return Analytics(
             total = total,
             unread = unread,
             perWeek = perWeek(ideas, 12),
             byType = byType,
             byStatus = byStatus,
-            topTools = topTools
+            topTools = topTools,
+            byTool = byTool,
+            byResource = byResource
         )
     }
 
