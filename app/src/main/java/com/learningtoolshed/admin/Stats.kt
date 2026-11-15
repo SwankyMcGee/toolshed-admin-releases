@@ -21,10 +21,12 @@ import java.util.Calendar
 
 /* The tools on the Tools hub (tools.html) and the resource pages
    per tool (resources.html). Kept in sync with the site by hand —
-   if a tool or page is added on the site, add it here too. */
-private val TOOLS = listOf("Work Cycle Timer", "Math Playground", "The Ideas Engine")
+   if a tool or page is added on the site, add it here too.
+   SitePages.kt owns the canonical list; these are the idea-side
+   view of the same names. */
+private val IDEA_TOOLS = listOf("Work Cycle Timer", "Math Playground", "The Ideas Engine")
 
-private val RESOURCES = listOf(
+private val IDEA_RESOURCES = listOf(
     "Work Cycle Timer" to "Quick start",
     "Work Cycle Timer" to "User guide",
     "Work Cycle Timer" to "Settings reference",
@@ -78,7 +80,7 @@ object Stats {
         /* All ideas per tool — the Tools hub page's cards, ranked by
            how many ideas mention them (feature ideas name the tool;
            tool ideas are the tool themselves). */
-        val byTool = (TOOLS + ideas.mapNotNull { if (it.isFeature) it.tool else null })
+        val byTool = (IDEA_TOOLS + ideas.mapNotNull { if (it.isFeature) it.tool else null })
             .distinct()
             .map { tool ->
                 val count = ideas.count { idea ->
@@ -96,7 +98,7 @@ object Stats {
            idea for that tool's resources. This is a proxy: "which
            tool's resources need work" is the closest the sheet can
            answer. */
-        val byResource = RESOURCES.map { (tool, page) ->
+        val byResource = IDEA_RESOURCES.map { (tool, page) ->
             val count = ideas.count { it.isFeature && it.tool.equals(tool, true) }
             Bucket(page, count)
         }.filter { it.count > 0 }.sortedByDescending { it.count }

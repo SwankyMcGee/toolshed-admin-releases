@@ -171,6 +171,14 @@ class AdminClient(private val app: Context) {
             )
     }
 
+    /** Usage rows for the last 90 days: path, day, views, seconds. */
+    fun pageviews(): List<PageView> {
+        val obj = get("pageviews")
+        if (!obj.optBoolean("ok")) throw AdminException(obj.optString("error", "unknown error"))
+        val arr = obj.optJSONArray("rows") ?: JSONArray()
+        return (0 until arr.length()).map { parsePageView(arr.getJSONObject(it)) }
+    }
+
     private fun parseIdea(o: JSONObject) = Idea(
         id = o.optInt("id"),
         type = o.optString("type"),
@@ -189,6 +197,13 @@ class AdminClient(private val app: Context) {
         whenIso = o.optString("when"),
         author = o.optString("author"),
         body = o.optString("body")
+    )
+
+    private fun parsePageView(o: JSONObject) = PageView(
+        path = o.optString("path"),
+        day = o.optString("day"),
+        views = o.optInt("views"),
+        seconds = o.optInt("seconds")
     )
 
     private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")

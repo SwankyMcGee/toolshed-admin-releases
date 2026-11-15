@@ -80,7 +80,8 @@ class MainActivity : ComponentActivity() {
                         onSendReply = { id, body -> vm.addReply(id, body) },
                         onShareReply = { body -> shareReply(body) },
                         onSaveConnection = vm::saveConnection,
-                        onDismissMessage = vm::dismissMessage
+                        onDismissMessage = vm::dismissMessage,
+                        onLoadUsage = vm::loadUsage
                     )
 
                     /* The update banner sits at the bottom, above

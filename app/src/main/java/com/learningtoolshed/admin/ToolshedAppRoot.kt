@@ -43,7 +43,7 @@ import androidx.compose.ui.unit.dp
 
 private enum class Dialog { None, Settings, Palette }
 
-private enum class Tab { Inbox, Overview }
+private enum class Tab { Inbox, Overview, Usage }
 
 @Composable
 fun ToolshedAppRoot(
@@ -63,7 +63,8 @@ fun ToolshedAppRoot(
     onSendReply: (Int, String) -> Unit,
     onShareReply: (String) -> Unit,
     onSaveConnection: (String, String) -> Unit,
-    onDismissMessage: () -> Unit
+    onDismissMessage: () -> Unit,
+    onLoadUsage: () -> Unit
 ) {
     var dialog by remember { mutableStateOf(Dialog.None) }
     var openIdea by remember { mutableStateOf<Idea?>(null) }
@@ -73,6 +74,17 @@ fun ToolshedAppRoot(
     androidx.compose.runtime.LaunchedEffect(openIdea?.id) {
         val id = openIdea?.id
         if (id != null) onLoadReplies(id)
+    }
+
+    /* Usage rows are fetched the first time the tab is opened, then
+       only refreshed when the user pulls to refresh — the data
+       changes on the timescale of visits, not seconds. */
+    var usageLoaded by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(tab) {
+        if (tab == Tab.Usage && !usageLoaded) {
+            usageLoaded = true
+            onLoadUsage()
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -96,13 +108,19 @@ fun ToolshedAppRoot(
                 onToggleUnread = onToggleUnread,
                 onToggleType = onToggleType,
                 onClearFilters = onClearFilters,
-                onMarkAllRead = onMarkAllRead
+                onMarkAllRead = onMarkAllRead,
+                hidden = tab != Tab.Inbox
             )
 
             if (tab == Tab.Overview) {
                 AnalyticsScreen(
                     ideas = state.ideas,
                     onRefresh = onRefresh
+                )
+            } else if (tab == Tab.Usage) {
+                UsageScreen(
+                    state = state,
+                    onRefresh = onLoadUsage
                 )
             } else when {
                 state.load == LoadState.NotConfigured ->
@@ -230,7 +248,7 @@ private fun TopBar(
             )
         }
 
-        /* Inbox / Overview tabs — the two things the app does. */
+        /* Inbox / Overview / Usage — the three things the app does. */
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(999.dp))
@@ -241,6 +259,7 @@ private fun TopBar(
         ) {
             TabPill(text = "Inbox", selected = tab == Tab.Inbox, onClick = { onTabChange(Tab.Inbox) })
             TabPill(text = "Overview", selected = tab == Tab.Overview, onClick = { onTabChange(Tab.Overview) })
+            TabPill(text = "Usage", selected = tab == Tab.Usage, onClick = { onTabChange(Tab.Usage) })
         }
 
         if (syncing) {
@@ -303,9 +322,11 @@ private fun FilterRow(
     onToggleUnread: () -> Unit,
     onToggleType: (String) -> Unit,
     onClearFilters: () -> Unit,
-    onMarkAllRead: () -> Unit
+    onMarkAllRead: () -> Unit,
+    hidden: Boolean = false
 ) {
     val c = MaterialTheme.toolshed
+    if (hidden) return
     Column(
         modifier = Modifier
             .fillMaxWidth()

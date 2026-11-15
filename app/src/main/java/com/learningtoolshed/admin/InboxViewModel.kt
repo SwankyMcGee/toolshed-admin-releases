@@ -43,7 +43,13 @@ data class InboxState(
     /* Replies for the idea currently open in the sheet. Empty when
        no idea is open, or when the open idea has no replies. */
     val replies: List<Reply> = emptyList(),
-    val loadingReplies: Boolean = false
+    val loadingReplies: Boolean = false,
+    /* Usage rows from the PageViews sheet, newest last. Empty until
+       the first load; loading is tracked separately so the Usage
+       tab can show a spinner without disturbing the inbox. */
+    val pageViews: List<PageView> = emptyList(),
+    val loadingUsage: Boolean = false,
+    val usageError: String? = null
 ) {
     val visible: List<Idea>
         get() {
@@ -278,6 +284,33 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun statusOf(id: Int): String =
         _state.value.ideas.firstOrNull { it.id == id }?.status ?: "new"
+
+    /* ---------- usage ---------- */
+
+    /** Load the usage rows for the Usage tab. Called on first open
+        and on pull-to-refresh; the rows are small so it is cheap. */
+    fun loadUsage() {
+        if (!client.isConfigured()) {
+            _state.value = _state.value.copy(usageError = "Not connected yet.")
+            return
+        }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(loadingUsage = true, usageError = null)
+            try {
+                val rows = withContext(Dispatchers.IO) { client.pageviews() }
+                _state.value = _state.value.copy(
+                    pageViews = rows,
+                    loadingUsage = false,
+                    usageError = if (rows.isEmpty()) "No visits recorded yet." else null
+                )
+            } catch (err: Exception) {
+                _state.value = _state.value.copy(
+                    loadingUsage = false,
+                    usageError = describe(err)
+                )
+            }
+        }
+    }
 
     fun dismissMessage() {
         _state.value = _state.value.copy(message = null)
