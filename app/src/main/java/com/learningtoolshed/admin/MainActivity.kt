@@ -52,12 +52,37 @@ class MainActivity : ComponentActivity() {
                release exists, a banner appears; if not, nothing. */
             var update by remember { mutableStateOf<UpdateInfo?>(null) }
 
+            /* A downloaded APK waiting to be installed. The receiver
+               can't launch the installer itself on Android 10+ (it
+               isn't an Activity), so it parks the file here and this
+               poller picks it up on the next frame. */
+            var pendingInstall by remember { mutableStateOf(false) }
+
             androidx.compose.runtime.LaunchedEffect(Unit) {
                 launch {
                     val info = withContext(Dispatchers.IO) {
                         UpdateChecker.check(BuildConfig.VERSION_CODE)
                     }
                     if (info != null) update = info
+                }
+                /* Watch for the download to land. Cheap: one volatile
+                   read per second, and it stops as soon as it fires. */
+                while (true) {
+                    val f = UpdateDownloader.takeReady()
+                    if (f != null) {
+                        pendingInstall = true
+                        break
+                    }
+                    kotlinx.coroutines.delay(1000)
+                }
+            }
+
+            androidx.compose.runtime.LaunchedEffect(pendingInstall) {
+                if (pendingInstall) {
+                    UpdateDownloader.takeReady()?.let { file ->
+                        UpdateInstaller.install(this@MainActivity, file)
+                    }
+                    pendingInstall = false
                 }
             }
 
