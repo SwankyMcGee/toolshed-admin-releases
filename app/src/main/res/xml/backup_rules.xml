@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Backup rules: the admin key and endpoint are deliberately NOT
+     backed up (they are the app's only secret). -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="toolshed_admin.xml" />
+</full-backup-content>

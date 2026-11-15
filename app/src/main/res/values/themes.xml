@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app's own chrome before Compose takes over: calm palette,
+         matching site.css html[data-theme="calm"]. -->
+    <style name="Theme.Toolshed.Admin" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">@color/calm_bg</item>
+        <item name="android:statusBarColor">@color/calm_surface</item>
+        <item name="android:navigationBarColor">@color/calm_surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

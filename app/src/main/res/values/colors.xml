@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- calm palette, from site.css html[data-theme="calm"] -->
+    <color name="calm_bg">#F2F6F8</color>
+    <color name="calm_surface">#FFFFFF</color>
+    <color name="calm_text">#33414D</color>
+    <color name="calm_accent">#4D84A6</color>
+</resources>
