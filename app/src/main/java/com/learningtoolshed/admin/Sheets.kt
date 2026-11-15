@@ -9,11 +9,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
@@ -56,18 +61,29 @@ private fun SheetFrame(
             usePlatformDefaultWidth = false
         )
     ) {
+        /* The box is a fraction of the screen rather than a fixed
+           top gap, and the column is bottom-aligned inside it. The
+           column can therefore be taller than the screen (a long
+           idea with several replies) and scroll, instead of pushing
+           its buttons off the bottom where they can't be reached.
+           imePadding keeps the field above the keyboard. */
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 56.dp),
+                .fillMaxHeight(0.94f)
+                .padding(top = 24.dp),
             contentAlignment = Alignment.BottomCenter
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .widthIn(max = 560.dp)
                     .clip(sheetShape())
                     .background(c.surface)
                     .border(1.dp, c.border, sheetShape())
+                    .verticalScroll(rememberScrollState())
+                    .imePadding()
+                    .navigationBarsPadding()
                     .padding(horizontal = 18.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {

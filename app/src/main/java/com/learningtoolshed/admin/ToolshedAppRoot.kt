@@ -10,8 +10,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,9 +19,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,21 +33,37 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.InsertChart
+
 /* ============================================================
-   The shell. Top bar like the site's .site-head (white, thin
-   bottom border, bold brand), a filter row, then the inbox as a
-   lazy list of cards. A teacher's thumb lives on "refresh" and
-   "unread", so those are the two things that are never buried.
+   The shell.
+
+   Two fixed zones and a scrolling middle:
+     - a slim top bar: brand, unread count, refresh, palette, settings
+     - a bottom navigation bar: Inbox / Overview / Usage
+
+   The tabs live at the bottom rather than the top because on a
+   portrait phone a top row holding a title + three tabs + three
+   icons is wider than the screen, so it either clipped or
+   collapsed the title. Bottom navigation is also where a thumb
+   rests, and it leaves the full width for the title.
    ============================================================ */
 
 private enum class Dialog { None, Settings, Palette }
 
-private enum class Tab { Inbox, Overview, Usage }
+private enum class Tab(val label: String) {
+    Inbox("Inbox"),
+    Overview("Overview"),
+    Usage("Usage")
+}
 
 @Composable
 fun ToolshedAppRoot(
@@ -64,126 +84,88 @@ fun ToolshedAppRoot(
     onShareReply: (String) -> Unit,
     onSaveConnection: (String, String) -> Unit,
     onDismissMessage: () -> Unit,
-    onLoadUsage: () -> Unit
+    onLoadUsage: () -> Unit,
+    /* Drawn above the navigation bar, in the layout rather than
+       floating over it, so it can never cover the tabs. */
+    banner: (@Composable () -> Unit)? = null
 ) {
     var dialog by remember { mutableStateOf(Dialog.None) }
     var openIdea by remember { mutableStateOf<Idea?>(null) }
     var tab by remember { mutableStateOf(Tab.Inbox) }
 
     /* When an idea is opened, load its replies once. */
-    androidx.compose.runtime.LaunchedEffect(openIdea?.id) {
-        val id = openIdea?.id
-        if (id != null) onLoadReplies(id)
+    LaunchedEffect(openIdea?.id) {
+        openIdea?.id?.let(onLoadReplies)
     }
 
     /* Usage rows are fetched the first time the tab is opened, then
-       only refreshed when the user pulls to refresh — the data
-       changes on the timescale of visits, not seconds. */
+       only when the user asks — visits accumulate slowly. */
     var usageLoaded by remember { mutableStateOf(false) }
-    androidx.compose.runtime.LaunchedEffect(tab) {
+    LaunchedEffect(tab) {
         if (tab == Tab.Usage && !usageLoaded) {
             usageLoaded = true
             onLoadUsage()
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize()) {
 
-            TopBar(
-                unread = state.unreadCount,
-                syncing = state.load == LoadState.Loading,
-                tab = tab,
-                onTabChange = { tab = it },
-                onRefresh = onRefresh,
-                onSettings = { dialog = Dialog.Settings },
-                onPalette = { dialog = Dialog.Palette }
-            )
+        TopBar(
+            unread = state.unreadCount,
+            syncing = state.load == LoadState.Loading,
+            onRefresh = onRefresh,
+            onSettings = { dialog = Dialog.Settings },
+            onPalette = { dialog = Dialog.Palette }
+        )
 
-            FilterRow(
-                filters = state.filters,
-                total = state.ideas.size,
-                shown = state.visible.size,
-                onQueryChange = onQueryChange,
-                onToggleUnread = onToggleUnread,
-                onToggleType = onToggleType,
-                onClearFilters = onClearFilters,
-                onMarkAllRead = onMarkAllRead,
-                hidden = tab != Tab.Inbox
-            )
+        Box(modifier = Modifier.weight(1f)) {
+            when (tab) {
+                Tab.Inbox -> InboxScreen(
+                    state = state,
+                    onQueryChange = onQueryChange,
+                    onToggleUnread = onToggleUnread,
+                    onToggleType = onToggleType,
+                    onClearFilters = onClearFilters,
+                    onMarkAllRead = onMarkAllRead,
+                    onRefresh = onRefresh,
+                    onOpenIdea = { idea ->
+                        openIdea = idea
+                        if (!idea.read) onMarkRead(idea.id)
+                    },
+                    onOpenSettings = { dialog = Dialog.Settings }
+                )
 
-            if (tab == Tab.Overview) {
-                AnalyticsScreen(
+                Tab.Overview -> AnalyticsScreen(
                     ideas = state.ideas,
                     onRefresh = onRefresh
                 )
-            } else if (tab == Tab.Usage) {
-                UsageScreen(
+
+                Tab.Usage -> UsageScreen(
                     state = state,
                     onRefresh = onLoadUsage
                 )
-            } else when {
-                state.load == LoadState.NotConfigured ->
-                    CenteredMessage(
-                        title = "Not connected yet",
-                        body = "Add the Ideas Engine URL and the admin key to start reading ideas.",
-                        action = "Open settings",
-                        onAction = { dialog = Dialog.Settings }
-                    )
-
-                state.ideas.isEmpty() && state.load == LoadState.Loading ->
-                    CenteredMessage(title = "Looking…", body = "Reading the Ideas Engine sheet.")
-
-                state.ideas.isEmpty() && state.load == LoadState.Failed ->
-                    CenteredMessage(
-                        title = "Couldn't read the ideas",
-                        body = state.message ?: "Check the connection and try again.",
-                        action = "Try again",
-                        onAction = onRefresh
-                    )
-
-                state.ideas.isEmpty() ->
-                    CenteredMessage(
-                        title = "Nothing in the shed yet",
-                        body = "Ideas from the site land here the moment someone sends one."
-                    )
-
-                state.visible.isEmpty() ->
-                    CenteredMessage(
-                        title = "No ideas match",
-                        body = "Try clearing the filters, or search for something else.",
-                        action = "Clear filters",
-                        onAction = onClearFilters
-                    )
-
-                else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        start = 14.dp, end = 14.dp, top = 4.dp, bottom = 28.dp
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    item { MetaLine(state) }
-                    items(state.visible, key = { it.id }) { idea ->
-                        IdeaCard(
-                            idea = idea,
-                            onClick = {
-                                openIdea = idea
-                                if (!idea.read) onMarkRead(idea.id)
-                            }
-                        )
-                    }
-                }
             }
 
-            if (state.message != null) {
-                MessageBar(text = state.message!!, onDismiss = onDismissMessage)
+            /* A failure message floats above the list, not in it, so
+               it never pushes the content down the page. */
+            state.message?.let { msg ->
+                MessageBar(
+                    text = msg,
+                    onDismiss = onDismissMessage,
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
             }
         }
+
+        banner?.invoke()
+
+        BottomTabs(
+            selected = tab,
+            unread = state.unreadCount,
+            onSelect = { tab = it }
+        )
     }
 
-    /* The sheet swaps its content in place, so opening an idea doesn't
-       animate a new screen in — gentler, and closer to the site. */
     openIdea?.let { idea ->
         IdeaSheet(
             idea = idea,
@@ -213,14 +195,88 @@ fun ToolshedAppRoot(
     }
 }
 
+/* ---------- the inbox ---------- */
+
+@Composable
+private fun InboxScreen(
+    state: InboxState,
+    onQueryChange: (String) -> Unit,
+    onToggleUnread: () -> Unit,
+    onToggleType: (String) -> Unit,
+    onClearFilters: () -> Unit,
+    onMarkAllRead: () -> Unit,
+    onRefresh: () -> Unit,
+    onOpenIdea: (Idea) -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        FilterRow(
+            filters = state.filters,
+            total = state.ideas.size,
+            shown = state.visible.size,
+            onQueryChange = onQueryChange,
+            onToggleUnread = onToggleUnread,
+            onToggleType = onToggleType,
+            onClearFilters = onClearFilters,
+            onMarkAllRead = onMarkAllRead
+        )
+
+        when {
+            state.load == LoadState.NotConfigured ->
+                CenteredMessage(
+                    title = "Not connected yet",
+                    body = "Add the Ideas Engine URL and the admin key to start reading ideas.",
+                    action = "Open settings",
+                    onAction = onOpenSettings
+                )
+
+            state.ideas.isEmpty() && state.load == LoadState.Loading ->
+                CenteredMessage(title = "Looking…", body = "Reading the Ideas Engine sheet.")
+
+            state.ideas.isEmpty() && state.load == LoadState.Failed ->
+                CenteredMessage(
+                    title = "Couldn't read the ideas",
+                    body = state.message ?: "Check the connection and try again.",
+                    action = "Try again",
+                    onAction = onRefresh
+                )
+
+            state.ideas.isEmpty() ->
+                CenteredMessage(
+                    title = "Nothing in the shed yet",
+                    body = "Ideas from the site land here the moment someone sends one."
+                )
+
+            state.visible.isEmpty() ->
+                CenteredMessage(
+                    title = "No ideas match",
+                    body = "Try clearing the filters, or search for something else.",
+                    action = "Clear filters",
+                    onAction = onClearFilters
+                )
+
+            else -> LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = 14.dp, end = 14.dp, top = 8.dp, bottom = 24.dp
+                ),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item { MetaLine(state) }
+                items(state.visible, key = { it.id }) { idea ->
+                    IdeaCard(idea = idea, onClick = { onOpenIdea(idea) })
+                }
+            }
+        }
+    }
+}
+
 /* ---------- top bar (the site's .site-head) ---------- */
 
 @Composable
 private fun TopBar(
     unread: Int,
     syncing: Boolean,
-    tab: Tab,
-    onTabChange: (Tab) -> Unit,
     onRefresh: () -> Unit,
     onSettings: () -> Unit,
     onPalette: () -> Unit
@@ -230,41 +286,37 @@ private fun TopBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(c.surface)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(start = 14.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = "The Learning Toolshed",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = c.text
+                color = c.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
-            Text(
-                text = "Admin" + if (unread > 0) " · $unread unread" else "",
-                style = MaterialTheme.typography.bodySmall,
-                color = c.dim
-            )
-        }
-
-        /* Inbox / Overview / Usage — the three things the app does. */
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .background(c.bg)
-                .border(1.dp, c.border, RoundedCornerShape(999.dp))
-                .padding(2.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            TabPill(text = "Inbox", selected = tab == Tab.Inbox, onClick = { onTabChange(Tab.Inbox) })
-            TabPill(text = "Overview", selected = tab == Tab.Overview, onClick = { onTabChange(Tab.Overview) })
-            TabPill(text = "Usage", selected = tab == Tab.Usage, onClick = { onTabChange(Tab.Usage) })
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = "Admin",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.dim
+                )
+                if (unread > 0) {
+                    UnreadBadge(count = unread)
+                }
+            }
         }
 
         if (syncing) {
             CircularProgressIndicator(
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(18.dp),
                 strokeWidth = 2.dp,
                 color = c.accent
             )
@@ -274,44 +326,103 @@ private fun TopBar(
         HeaderIconButton(label = "Palette", onClick = onPalette) { IconPalette() }
         HeaderIconButton(label = "Settings", onClick = onSettings) { IconGear() }
     }
-
     Hairline()
 }
 
+/** The unread count, as a small filled pill. */
 @Composable
-private fun TabPill(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun UnreadBadge(count: Int) {
     val c = MaterialTheme.toolshed
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
-            .background(if (selected) c.surface else Color.Transparent)
-            .border(1.dp, if (selected) c.accent else Color.Transparent, RoundedCornerShape(999.dp))
-            .clickable(onClick = onClick)
-            .heightIn(min = 32.dp)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center
+            .background(c.accent)
+            .padding(horizontal = 7.dp, vertical = 1.dp)
     ) {
         Text(
-            text = text,
+            text = if (count > 99) "99+" else count.toString(),
             style = MaterialTheme.typography.bodySmall,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            color = if (selected) c.accent else c.dim
+            fontWeight = FontWeight.Bold,
+            color = c.accentText
         )
     }
 }
 
+/* ---------- bottom navigation ---------- */
+
+@Composable
+private fun BottomTabs(
+    selected: Tab,
+    unread: Int,
+    onSelect: (Tab) -> Unit
+) {
+    val c = MaterialTheme.toolshed
+    NavigationBar(containerColor = c.surface) {
+        Tab.values().forEach { tab ->
+            /* A dot on Inbox when there are unread ideas, so the
+               count is visible from any tab without reading the
+               title line. */
+            val showDot = tab == Tab.Inbox && unread > 0
+            NavigationBarItem(
+                selected = selected == tab,
+                onClick = { onSelect(tab) },
+                icon = {
+                    Box {
+                        Icon(
+                            imageVector = tab.icon(),
+                            contentDescription = tab.label,
+                            tint = if (selected == tab) c.accent else c.dim
+                        )
+                        if (showDot) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(7.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(c.accent)
+                                    .border(1.dp, c.surface, RoundedCornerShape(50))
+                            )
+                        }
+                    }
+                },
+                label = {
+                    Text(
+                        text = tab.label,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (selected == tab) c.accent else c.dim
+                    )
+                },
+                colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
+                    selectedIconColor = c.accent,
+                    selectedTextColor = c.accent,
+                    indicatorColor = c.surface2,
+                    unselectedIconColor = c.dim,
+                    unselectedTextColor = c.dim
+                )
+            )
+        }
+    }
+}
+
+private fun Tab.icon(): ImageVector = when (this) {
+    Tab.Inbox -> Icons.Outlined.Inbox
+    Tab.Overview -> Icons.Outlined.Insights
+    Tab.Usage -> Icons.Outlined.InsertChart
+}
+
 @Composable
 private fun Hairline() {
-    val c = MaterialTheme.toolshed
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(1.dp)
-            .background(c.border)
+            .background(MaterialTheme.toolshed.border)
     )
 }
 
 /* ---------- filters ---------- */
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
 @Composable
 private fun FilterRow(
@@ -322,11 +433,9 @@ private fun FilterRow(
     onToggleUnread: () -> Unit,
     onToggleType: (String) -> Unit,
     onClearFilters: () -> Unit,
-    onMarkAllRead: () -> Unit,
-    hidden: Boolean = false
+    onMarkAllRead: () -> Unit
 ) {
     val c = MaterialTheme.toolshed
-    if (hidden) return
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -336,7 +445,12 @@ private fun FilterRow(
     ) {
         SearchField(query = filters.query, onQueryChange = onQueryChange)
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        /* FlowRow, not Row: on a portrait phone three labelled chips
+           do not fit on one line, and a plain Row clipped the last. */
+        androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             PillButton(
                 text = if (filters.onlyUnread) "Unread ✓" else "Unread",
                 filled = filters.onlyUnread,
@@ -364,7 +478,9 @@ private fun FilterRow(
                 color = c.dim,
                 modifier = Modifier.weight(1f)
             )
-            if (filters.query.isNotEmpty() || filters.onlyUnread || filters.onlyTool || filters.onlyFeature) {
+            val filtering = filters.query.isNotEmpty() ||
+                filters.onlyUnread || filters.onlyTool || filters.onlyFeature
+            if (filtering) {
                 PillButton(text = "Clear", onClick = onClearFilters)
                 Spacer(Modifier.width(8.dp))
             }
@@ -381,10 +497,9 @@ private fun FilterRow(
 @Composable
 private fun MetaLine(state: InboxState) {
     val c = MaterialTheme.toolshed
-    val at = state.lastSyncAt
     Text(
-        text = if (at == 0L) "Not synced yet"
-        else "Synced " + Clock.format(at),
+        text = if (state.lastSyncAt == 0L) "Not synced yet"
+        else "Synced " + Clock.format(state.lastSyncAt),
         style = MaterialTheme.typography.bodySmall,
         color = c.dim,
         modifier = Modifier.padding(vertical = 2.dp)
@@ -395,11 +510,12 @@ private fun MetaLine(state: InboxState) {
 private fun IdeaCard(idea: Idea, onClick: () -> Unit) {
     val c = MaterialTheme.toolshed
     Card(onClick = onClick) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            /* Meta line: type, tool, status, timestamp — wraps, never
+               clips, so a long tool name doesn't push the status off. */
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 if (!idea.read) {
                     Box(
@@ -408,28 +524,22 @@ private fun IdeaCard(idea: Idea, onClick: () -> Unit) {
                             .clip(RoundedCornerShape(50))
                             .background(c.accent)
                     )
+                    Spacer(Modifier.width(8.dp))
                 }
-                Text(
-                    text = idea.type.uppercase(),
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Bold,
-                    color = c.accent
-                )
+                TypeTag(idea.type)
                 if (idea.isFeature && idea.tool.isNotBlank()) {
+                    Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "· " + idea.tool,
+                        text = idea.tool,
                         style = MaterialTheme.typography.bodySmall,
                         color = c.dim,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                 }
-                Box(modifier = Modifier.weight(1f))
-                Text(
-                    text = idea.status,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (idea.status == "new") c.accent else c.dim
-                )
+                Spacer(Modifier.weight(1f))
+                StatusTag(idea.status)
             }
 
             Text(
@@ -440,14 +550,61 @@ private fun IdeaCard(idea: Idea, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis
             )
 
-            if (idea.name.isNotBlank()) {
+            /* Footer: who sent it, and when. */
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (idea.name.isNotBlank()) {
+                    Text(
+                        text = "— " + idea.name,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.dim,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                }
+                Spacer(Modifier.weight(1f))
                 Text(
-                    text = "— " + idea.name,
+                    text = Clock.formatIdea(idea.whenIso),
                     style = MaterialTheme.typography.bodySmall,
-                    color = c.dim
+                    color = c.dim,
+                    maxLines = 1
                 )
             }
         }
+    }
+}
+
+/** Type as a small uppercase label — the sheet's own wording. */
+@Composable
+private fun TypeTag(type: String) {
+    val c = MaterialTheme.toolshed
+    Text(
+        text = type.uppercase(),
+        style = MaterialTheme.typography.bodySmall,
+        fontWeight = FontWeight.Bold,
+        color = c.accent
+    )
+}
+
+/** Status as a soft chip, so it scans without shouting. */
+@Composable
+private fun StatusTag(status: String) {
+    val c = MaterialTheme.toolshed
+    val label = status.replaceFirstChar { it.uppercase() }
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(c.surface2)
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (status == "new") c.accent else c.dim
+        )
     }
 }
 
@@ -461,8 +618,13 @@ private fun CenteredMessage(
     onAction: (() -> Unit)? = null
 ) {
     val c = MaterialTheme.toolshed
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Card(modifier = Modifier.padding(20.dp), primary = true) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(20.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(primary = true) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = title,
@@ -479,14 +641,21 @@ private fun CenteredMessage(
 }
 
 @Composable
-private fun MessageBar(text: String, onDismiss: () -> Unit) {
+private fun MessageBar(
+    text: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     val c = MaterialTheme.toolshed
-    /* Anchored under the top bar rather than at the bottom, so the
-       error never covers the idea being read. */
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .background(c.surface2)
+            .background(c.surface)
+            .border(
+                width = 1.dp,
+                color = c.accent,
+                shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+            )
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -499,5 +668,3 @@ private fun MessageBar(text: String, onDismiss: () -> Unit) {
         PillButton(text = "Dismiss", onClick = onDismiss)
     }
 }
-
-/* ---------- top bar (the site's .site-head) ---------- */

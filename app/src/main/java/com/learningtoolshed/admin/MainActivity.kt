@@ -9,11 +9,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -87,41 +89,43 @@ class MainActivity : ComponentActivity() {
             }
 
             ToolshedTheme(paletteId = palette) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    ToolshedAppRoot(
-                        state = state,
-                        paletteId = palette,
-                        onPaletteChange = { vm.setPalette(it); palette = it },
-                        onQueryChange = vm::setQuery,
-                        onToggleUnread = vm::toggleUnread,
-                        onToggleType = vm::toggleType,
-                        onClearFilters = vm::clearFilters,
-                        onRefresh = vm::refresh,
-                        onMarkRead = vm::markRead,
-                        onMarkAllRead = vm::markAllRead,
-                        onSetStatus = vm::setStatus,
-                        onSaveNote = vm::saveNote,
-                        onLoadReplies = vm::loadReplies,
-                        onSendReply = { id, body -> vm.addReply(id, body) },
-                        onShareReply = { body -> shareReply(body) },
-                        onSaveConnection = vm::saveConnection,
-                        onDismissMessage = vm::dismissMessage,
-                        onLoadUsage = vm::loadUsage
-                    )
-
-                    /* The update banner sits at the bottom, above
-                       everything, until dismissed or tapped. */
-                    update?.let { info ->
-                        UpdateBanner(
-                            versionName = info.versionName,
-                            onDismiss = { update = null },
-                            onDownload = {
-                                UpdateDownloader.download(this@MainActivity, info.downloadUrl)
-                                update = null
-                            }
-                        )
+                ToolshedAppRoot(
+                    state = state,
+                    paletteId = palette,
+                    onPaletteChange = { vm.setPalette(it); palette = it },
+                    onQueryChange = vm::setQuery,
+                    onToggleUnread = vm::toggleUnread,
+                    onToggleType = vm::toggleType,
+                    onClearFilters = vm::clearFilters,
+                    onRefresh = vm::refresh,
+                    onMarkRead = vm::markRead,
+                    onMarkAllRead = vm::markAllRead,
+                    onSetStatus = vm::setStatus,
+                    onSaveNote = vm::saveNote,
+                    onLoadReplies = vm::loadReplies,
+                    onSendReply = { id, body -> vm.addReply(id, body) },
+                    onShareReply = { body -> shareReply(body) },
+                    onSaveConnection = vm::saveConnection,
+                    onDismissMessage = vm::dismissMessage,
+                    onLoadUsage = vm::loadUsage,
+                    /* The update card is part of the layout, above the
+                       tabs, so it can't cover them. */
+                    banner = update?.let { info ->
+                        {
+                            UpdateBanner(
+                                versionName = info.versionName,
+                                onDismiss = { update = null },
+                                onDownload = {
+                                    UpdateDownloader.download(this@MainActivity, info.downloadUrl)
+                                    update = null
+                                },
+                                modifier = Modifier.padding(
+                                    start = 14.dp, end = 14.dp, top = 8.dp
+                                )
+                            )
+                        }
                     }
-                }
+                )
             }
         }
     }

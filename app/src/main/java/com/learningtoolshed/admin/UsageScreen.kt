@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 /* ============================================================
@@ -76,7 +77,7 @@ fun UsageScreen(
                         color = c.accent
                     )
                 } else {
-                    PillButton(text = "Refresh", onClick = onRefresh)
+                    HeaderIconButton(label = "Refresh", onClick = onRefresh) { IconRefresh() }
                 }
             }
         }
@@ -241,7 +242,9 @@ fun UsageScreen(
     }
 }
 
-/** Horizontal bars: label, count, and average time on the right. */
+/** Horizontal bars: label, count, and average time on the right.
+    The bar is a fraction of its track rather than a fixed number of
+    dp, so its length stays true whatever the screen width is. */
 @Composable
 private fun UsageBars(
     stats: List<UsageStat>,
@@ -250,7 +253,7 @@ private fun UsageBars(
     barColor: androidx.compose.ui.graphics.Color
 ) {
     val max = stats.maxOfOrNull { it.views }?.coerceAtLeast(1) ?: 1
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         stats.forEach { stat ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -261,20 +264,21 @@ private fun UsageBars(
                     text = stat.label,
                     style = MaterialTheme.typography.bodySmall,
                     color = textColor,
-                    modifier = Modifier.width(96.dp),
-                    maxLines = 1
+                    modifier = Modifier.width(92.dp),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(14.dp)
+                        .height(12.dp)
                         .clip(RoundedCornerShape(4.dp))
                         .background(trackColor)
                 ) {
                     Box(
                         modifier = Modifier
-                            .width((stat.views.toFloat() / max * 100).dp)
-                            .height(14.dp)
+                            .fillMaxWidth(stat.views.toFloat() / max)
+                            .height(12.dp)
                             .clip(RoundedCornerShape(4.dp))
                             .background(barColor)
                     )
@@ -284,7 +288,7 @@ private fun UsageBars(
                     style = MaterialTheme.typography.bodySmall,
                     color = textColor,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.width(36.dp)
+                    modifier = Modifier.width(34.dp)
                 )
             }
         }

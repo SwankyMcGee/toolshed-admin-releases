@@ -67,7 +67,7 @@ fun AnalyticsScreen(
                         color = c.dim
                     )
                 }
-                PillButton(text = "Refresh", onClick = onRefresh)
+                HeaderIconButton(label = "Refresh", onClick = onRefresh) { IconRefresh() }
             }
         }
 
