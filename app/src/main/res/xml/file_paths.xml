@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The update APK lives in the app's external files dir
+     (Android/data/com.learningtoolshed.admin/files/Download/).
+     The FileProvider exposes just that path to the system
+     installer. -->
+<paths>
+    <external-files-path
+        name="updates"
+        path="Download/" />
+</paths>
