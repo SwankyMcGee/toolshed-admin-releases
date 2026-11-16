@@ -1,24 +1,31 @@
 package com.learningtoolshed.admin
 
 import android.Manifest
+import android.app.DownloadManager
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -54,37 +61,82 @@ class MainActivity : ComponentActivity() {
                release exists, a banner appears; if not, nothing. */
             var update by remember { mutableStateOf<UpdateInfo?>(null) }
 
-            /* A downloaded APK waiting to be installed. The receiver
-               can't launch the installer itself on Android 10+ (it
-               isn't an Activity), so it parks the file here and this
-               poller picks it up on the next frame. */
-            var pendingInstall by remember { mutableStateOf(false) }
+            /* A download is in flight. The banner's button clears itself
+               when this is set, and a small card says what's happening. */
+            var downloading by remember { mutableStateOf(false) }
+            var downloadFailed by remember { mutableStateOf<String?>(null) }
 
-            androidx.compose.runtime.LaunchedEffect(Unit) {
-                launch {
-                    val info = withContext(Dispatchers.IO) {
-                        UpdateChecker.check(BuildConfig.VERSION_CODE)
+            /* Android 10+ won't let a background app launch the
+               installer, so installing waits until we're in front.
+               Nothing is lost by waiting: the download carries on, and
+               the status is still there when we resume. */
+            var resumed by remember { mutableStateOf(false) }
+            DisposableEffect(Unit) {
+                val observer = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_RESUME -> resumed = true
+                        Lifecycle.Event.ON_PAUSE,
+                        Lifecycle.Event.ON_STOP -> resumed = false
+                        else -> Unit
                     }
-                    if (info != null) update = info
                 }
-                /* Watch for the download to land. Cheap: one volatile
-                   read per second, and it stops as soon as it fires. */
-                while (true) {
-                    val f = UpdateDownloader.takeReady()
-                    if (f != null) {
-                        pendingInstall = true
-                        break
-                    }
-                    kotlinx.coroutines.delay(1000)
-                }
+                this@MainActivity.lifecycle.addObserver(observer)
+                onDispose { this@MainActivity.lifecycle.removeObserver(observer) }
             }
 
-            androidx.compose.runtime.LaunchedEffect(pendingInstall) {
-                if (pendingInstall) {
-                    UpdateDownloader.takeReady()?.let { file ->
-                        UpdateInstaller.install(this@MainActivity, file)
+            LaunchedEffect(Unit) {
+                val info = withContext(Dispatchers.IO) {
+                    UpdateChecker.check(BuildConfig.VERSION_CODE)
+                }
+
+                /* A download that finished while the app wasn't running
+                   leaves an APK on disk. If an update is still on offer,
+                   install it now rather than making the user find it; if
+                   not, the file is a leftover from an install that
+                   already happened and can go. */
+                val apk = UpdateDownloader.apkFile(this@MainActivity)
+                if (apk.exists() && apk.length() > 0L) {
+                    if (info != null) {
+                        UpdateInstaller.install(this@MainActivity, apk)
+                    } else {
+                        apk.delete()
                     }
-                    pendingInstall = false
+                }
+
+                if (info != null) update = info
+            }
+
+            /* Watch the download. Polling rather than waiting for a
+               broadcast: the broadcast needs an exported receiver on
+               Android 13+, which is exactly the sort of thing that
+               silently stops arriving. */
+            LaunchedEffect(downloading, resumed) {
+                if (!downloading) return@LaunchedEffect
+                /* No point asking while we're in the background — but no
+                   harm either, since we check again on resume. */
+                while (downloading && resumed) {
+                    /* One of DownloadManager.STATUS_*: 1 pending, 2
+                       running, 8 successful, 16 failed. */
+                    when (UpdateDownloader.statusOf(this@MainActivity)) {
+                        DownloadManager.STATUS_SUCCESSFUL -> {
+                            downloading = false
+                            /* The APK is on disk and we're in the
+                               foreground: open the installer now. */
+                            UpdateInstaller.install(
+                                this@MainActivity,
+                                UpdateDownloader.apkFile(this@MainActivity)
+                            )
+                            UpdateDownloader.clear()
+                        }
+
+                        DownloadManager.STATUS_FAILED -> {
+                            downloading = false
+                            downloadFailed =
+                                UpdateDownloader.failureReason(this@MainActivity)
+                        }
+
+                        else -> delay(1000)
+                    }
                 }
             }
 
@@ -109,21 +161,48 @@ class MainActivity : ComponentActivity() {
                     onDismissMessage = vm::dismissMessage,
                     onLoadUsage = vm::loadUsage,
                     onLoadManifest = vm::loadManifest,
-                    /* The update card is part of the layout, above the
-                       tabs, so it can't cover them. */
-                    banner = update?.let { info ->
-                        {
-                            UpdateBanner(
-                                versionName = info.versionName,
-                                onDismiss = { update = null },
-                                onDownload = {
-                                    UpdateDownloader.download(this@MainActivity, info.downloadUrl)
-                                    update = null
-                                },
-                                modifier = Modifier.padding(
-                                    start = 14.dp, end = 14.dp, top = 8.dp
+                    /* The update cards are part of the layout, above the
+                       tabs, so they can't cover them. */
+                    banner = {
+                        Column(
+                            modifier = Modifier.padding(
+                                start = 14.dp, end = 14.dp, top = 8.dp
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (downloading) {
+                                DownloadProgressCard(
+                                    onCancel = {
+                                        downloading = false
+                                        UpdateDownloader.clear()
+                                    }
                                 )
-                            )
+                            } else {
+                                update?.let { info ->
+                                    UpdateBanner(
+                                        versionName = info.versionName,
+                                        onDismiss = { update = null },
+                                        onDownload = {
+                                            downloadFailed = null
+                                            downloading = UpdateDownloader.download(
+                                                this@MainActivity, info.downloadUrl
+                                            ) > 0L
+                                            if (!downloading) {
+                                                downloadFailed = "The download didn't start."
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+
+                            /* A failed download says why, next to the
+                               card that will retry it. */
+                            downloadFailed?.let { reason ->
+                                UpdateFailedCard(
+                                    reason = reason,
+                                    onDismiss = { downloadFailed = null }
+                                )
+                            }
                         }
                     }
                 )
