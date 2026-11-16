@@ -1,5 +1,7 @@
 package com.learningtoolshed.admin
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -32,15 +35,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Construction
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.InsertChart
+import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.MarkEmailUnread
 
 /* ============================================================
    The shell.
@@ -143,32 +152,43 @@ fun ToolshedAppRoot(
         )
 
         Box(modifier = Modifier.weight(1f)) {
-            when (tab) {
-                Tab.Inbox -> InboxScreen(
-                    state = state,
-                    onQueryChange = onQueryChange,
-                    onToggleUnread = onToggleUnread,
-                    onToggleType = onToggleType,
-                    onClearFilters = onClearFilters,
-                    onMarkAllRead = onMarkAllRead,
-                    onRefresh = onRefresh,
-                    onOpenIdea = { idea ->
-                        openIdea = idea
-                        if (!idea.read) onMarkRead(idea.id)
-                    },
-                    onOpenSettings = { dialog = Dialog.Settings }
-                )
+            /* Tabs cross-fade. The three screens are different shapes,
+               and a hard cut between them reads as a glitch; a short
+               fade keeps the chrome still and says "same app, other
+               view". */
+            Crossfade(
+                targetState = tab,
+                animationSpec = tween(durationMillis = 180),
+                modifier = Modifier.fillMaxSize(),
+                label = "tab"
+            ) { current ->
+                when (current) {
+                    Tab.Inbox -> InboxScreen(
+                        state = state,
+                        onQueryChange = onQueryChange,
+                        onToggleUnread = onToggleUnread,
+                        onToggleType = onToggleType,
+                        onClearFilters = onClearFilters,
+                        onMarkAllRead = onMarkAllRead,
+                        onRefresh = onRefresh,
+                        onOpenIdea = { idea ->
+                            openIdea = idea
+                            if (!idea.read) onMarkRead(idea.id)
+                        },
+                        onOpenSettings = { dialog = Dialog.Settings }
+                    )
 
-                Tab.Overview -> AnalyticsScreen(
-                    ideas = state.ideas,
-                    manifest = state.manifest,
-                    onRefresh = onRefresh
-                )
+                    Tab.Overview -> AnalyticsScreen(
+                        ideas = state.ideas,
+                        manifest = state.manifest,
+                        onRefresh = onRefresh
+                    )
 
-                Tab.Usage -> UsageScreen(
-                    state = state,
-                    onRefresh = onLoadUsage
-                )
+                    Tab.Usage -> UsageScreen(
+                        state = state,
+                        onRefresh = onLoadUsage
+                    )
+                }
             }
 
             /* A failure message floats above the list, not in it, so
@@ -177,7 +197,9 @@ fun ToolshedAppRoot(
                 MessageBar(
                     text = msg,
                     onDismiss = onDismissMessage,
-                    modifier = Modifier.align(Alignment.BottomCenter)
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = 12.dp, vertical = 12.dp)
                 )
             }
         }
@@ -243,11 +265,21 @@ private fun InboxScreen(
     onOpenSettings: () -> Unit
 ) {
     val c = MaterialTheme.toolshed
+
+    /* Filtering the inbox is the one piece of real work a screen does:
+       it lowercases every searchable field of every idea. Doing that on
+       each recomposition — every keystroke, every mark-read — is how a
+       list that takes a millisecond starts to feel slow. Keyed on the
+       two things the result depends on, so it runs when the data or the
+       filters change and not otherwise. */
+    val visible = remember(state.ideas, state.filters) { state.visible }
+
     Column(modifier = Modifier.fillMaxSize()) {
         FilterRow(
             filters = state.filters,
             total = state.ideas.size,
-            shown = state.visible.size,
+            shown = visible.size,
+            unread = state.unreadCount,
             onQueryChange = onQueryChange,
             onToggleUnread = onToggleUnread,
             onToggleType = onToggleType,
@@ -310,7 +342,7 @@ private fun InboxScreen(
                     showLogo = true
                 )
 
-            state.visible.isEmpty() ->
+            visible.isEmpty() ->
                 CenteredMessage(
                     title = "No ideas match",
                     body = "Try clearing the filters, or search for something else.",
@@ -327,7 +359,7 @@ private fun InboxScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     item { MetaLine(state) }
-                    items(state.visible, key = { it.id }) { idea ->
+                    items(visible, key = { it.id }) { idea ->
                         IdeaCard(idea = idea, onClick = { onOpenIdea(idea) })
                     }
                 }
@@ -361,7 +393,7 @@ private fun TopBar(
             BrandMarkH(height = 30.dp)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
                     text = "Admin",
@@ -369,7 +401,7 @@ private fun TopBar(
                     color = c.dim
                 )
                 if (unread > 0) {
-                    UnreadBadge(count = unread)
+                    UnreadPill(count = unread)
                 }
             }
         }
@@ -385,21 +417,22 @@ private fun TopBar(
     Hairline()
 }
 
-/** The unread count, as a small filled pill. */
+/** The unread count, as a soft pill. A count is only interesting while
+    it is small; past 99 the words carry it better than three digits. */
 @Composable
-private fun UnreadBadge(count: Int) {
+private fun UnreadPill(count: Int) {
     val c = MaterialTheme.toolshed
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
-            .background(c.accent)
-            .padding(horizontal = 7.dp, vertical = 1.dp)
+            .background(c.accent.copy(alpha = 0.14f))
+            .border(1.dp, c.accent.copy(alpha = 0.35f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 8.dp, vertical = 2.dp)
     ) {
         Text(
-            text = if (count > 99) "99+" else count.toString(),
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Bold,
-            color = c.accentText
+            text = if (count > 99) "99+ new" else "$count new",
+            style = MaterialTheme.typography.labelMedium,
+            color = c.accent
         )
     }
 }
@@ -414,12 +447,15 @@ private fun BottomTabs(
     onSelect: (Tab) -> Unit
 ) {
     val c = MaterialTheme.toolshed
-    NavigationBar(containerColor = c.surface) {
+    NavigationBar(
+        containerColor = c.surface,
+        tonalElevation = 0.dp
+    ) {
         tabs.forEach { tab ->
-            /* A dot on Inbox when there are unread ideas, so the
-               count is visible from any tab without reading the
-               title line. */
-            val showDot = tab == Tab.Inbox && unread > 0
+            /* A count on Inbox rather than a dot: a dot says "something",
+               a number says how much, and the whole point of the inbox is
+               the size of the pile waiting. */
+            val badge = if (tab == Tab.Inbox) unread else 0
             NavigationBarItem(
                 selected = selected == tab,
                 onClick = { onSelect(tab) },
@@ -430,15 +466,21 @@ private fun BottomTabs(
                             contentDescription = tab.label,
                             tint = if (selected == tab) c.accent else c.dim
                         )
-                        if (showDot) {
+                        if (badge > 0) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .size(7.dp)
-                                    .clip(RoundedCornerShape(50))
+                                    .clip(RoundedCornerShape(999.dp))
                                     .background(c.accent)
-                                    .border(1.dp, c.surface, RoundedCornerShape(50))
-                            )
+                                    .border(1.5.dp, c.surface, RoundedCornerShape(999.dp))
+                                    .padding(horizontal = 4.dp)
+                            ) {
+                                Text(
+                                    text = if (badge > 9) "9+" else badge.toString(),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = c.accentText
+                                )
+                            }
                         }
                     }
                 },
@@ -478,7 +520,6 @@ private fun Hairline() {
 }
 
 /* ---------- filters ---------- */
-
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
 @Composable
@@ -486,6 +527,7 @@ private fun FilterRow(
     filters: Filters,
     total: Int,
     shown: Int,
+    unread: Int,
     onQueryChange: (String) -> Unit,
     onToggleUnread: () -> Unit,
     onToggleType: (String) -> Unit,
@@ -497,37 +539,43 @@ private fun FilterRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(c.bg)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         SearchField(query = filters.query, onQueryChange = onQueryChange)
 
         /* FlowRow, not Row: on a portrait phone three labelled chips
-           do not fit on one line, and a plain Row clipped the last. */
+           do not fit on one line, and a plain Row clipped the last.
+           The count on Unread is the one number worth carrying into the
+           chip — the pile is the point of the filter. */
         androidx.compose.foundation.layout.FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            PillButton(
-                text = if (filters.onlyUnread) "Unread ✓" else "Unread",
-                filled = filters.onlyUnread,
+            FilterChip(
+                text = if (unread > 0) "Unread $unread" else "Unread",
+                selected = filters.onlyUnread,
+                icon = Icons.Outlined.MarkEmailUnread,
                 onClick = onToggleUnread
             )
-            PillButton(
+            FilterChip(
                 text = "Tool ideas",
-                filled = filters.onlyTool,
+                selected = filters.onlyTool,
+                icon = Icons.Outlined.Construction,
                 onClick = { onToggleType("tool") }
             )
-            PillButton(
+            FilterChip(
                 text = "Feature ideas",
-                filled = filters.onlyFeature,
+                selected = filters.onlyFeature,
+                icon = Icons.Outlined.Lightbulb,
                 onClick = { onToggleType("feature") }
             )
         }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             Text(
                 text = if (shown == total) "$total ideas" else "$shown of $total",
@@ -537,13 +585,11 @@ private fun FilterRow(
             )
             val filtering = filters.query.isNotEmpty() ||
                 filters.onlyUnread || filters.onlyTool || filters.onlyFeature
-            if (filtering) {
-                PillButton(text = "Clear", onClick = onClearFilters)
-                Spacer(Modifier.width(8.dp))
-            }
-            if (total > 0) {
-                PillButton(text = "All read", onClick = onMarkAllRead)
-            }
+
+            /* Actions are text, not pills: two small verbs in the corner
+               of a list should not weigh more than the list. */
+            if (filtering) TextAction(text = "Clear", onClick = onClearFilters)
+            if (total > 0) TextAction(text = "All read", onClick = onMarkAllRead)
         }
     }
     Hairline()
@@ -567,101 +613,94 @@ private fun MetaLine(state: InboxState) {
 private fun IdeaCard(idea: Idea, onClick: () -> Unit) {
     val c = MaterialTheme.toolshed
     Card(onClick = onClick) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            /* Meta line: type, tool, status, timestamp — wraps, never
-               clips, so a long tool name doesn't push the status off. */
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (!idea.read) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(c.accent)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                }
-                TypeTag(idea.type)
-                if (idea.isFeature && idea.tool.isNotBlank()) {
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = idea.tool,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.dim,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                StatusTag(idea.status)
+        Row(modifier = Modifier.fillMaxWidth()) {
+            /* An unread idea carries a rail down its leading edge. It
+               divides the list into seen and not-yet without a badge on
+               every row, and it survives a long list better than a
+               tint does — a column of coloured cards stops meaning
+               anything by the fourth one. */
+            if (!idea.read) {
+                Box(
+                    modifier = Modifier
+                        .width(3.dp)
+                        .heightIn(min = 36.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(c.accent)
+                )
+                Spacer(Modifier.width(11.dp))
             }
 
-            Text(
-                text = idea.idea,
-                style = MaterialTheme.typography.bodyMedium,
-                color = c.text,
-                maxLines = 4,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            /* Footer: who sent it, and when. */
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (idea.name.isNotBlank()) {
-                    Text(
-                        text = "— " + idea.name,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.dim,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
+                /* Meta line: type, tool, status — wraps, never clips, so
+                   a long tool name doesn't push the status off. */
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    MetaChip(
+                        text = idea.type.uppercase(),
+                        accent = !idea.read,
+                        icon = if (idea.isFeature) Icons.Outlined.Lightbulb
+                        else Icons.Outlined.Construction
+                    )
+                    if (idea.isFeature && idea.tool.isNotBlank()) {
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = idea.tool,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.dim,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    MetaChip(
+                        text = idea.status.replaceFirstChar { it.uppercase() },
+                        icon = STATUS_ICONS[idea.status]
                     )
                 }
-                Spacer(Modifier.weight(1f))
+
                 Text(
-                    text = Clock.formatIdea(idea.whenIso),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.dim,
-                    maxLines = 1
+                    text = idea.idea,
+                    /* The idea is the headline of its own card, so an
+                       unread one is set as one. */
+                    style = if (idea.read) MaterialTheme.typography.bodyMedium
+                    else MaterialTheme.typography.titleSmall,
+                    color = c.text,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis
                 )
+
+                /* Footer: who sent it, and how long ago. */
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (idea.name.isNotBlank()) {
+                        Text(
+                            text = "— " + idea.name,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.dim,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = Clock.relative(idea.whenIso),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.dim,
+                        maxLines = 1
+                    )
+                }
             }
         }
-    }
-}
-
-/** Type as a small uppercase label — the sheet's own wording. */
-@Composable
-private fun TypeTag(type: String) {
-    val c = MaterialTheme.toolshed
-    Text(
-        text = type.uppercase(),
-        style = MaterialTheme.typography.bodySmall,
-        fontWeight = FontWeight.Bold,
-        color = c.accent
-    )
-}
-
-/** Status as a soft chip, so it scans without shouting. */
-@Composable
-private fun StatusTag(status: String) {
-    val c = MaterialTheme.toolshed
-    val label = status.replaceFirstChar { it.uppercase() }
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(c.surface2)
-            .padding(horizontal = 8.dp, vertical = 2.dp)
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (status == "new") c.accent else c.dim
-        )
     }
 }
 
@@ -717,24 +756,48 @@ private fun MessageBar(
     modifier: Modifier = Modifier
 ) {
     val c = MaterialTheme.toolshed
+    val shape = RoundedCornerShape(14.dp)
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .clip(shape)
             .background(c.surface)
-            .border(
-                width = 1.dp,
-                color = c.accent,
-                shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
-            )
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .border(1.dp, c.accent.copy(alpha = 0.55f), shape)
+            /* A little lift: the bar floats over the list, and a hairline
+               border alone doesn't say so. */
+            .shadow(6.dp, shape)
+            .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        Icon(
+            Icons.Outlined.ErrorOutline,
+            contentDescription = null,
+            tint = c.accent,
+            modifier = Modifier.size(18.dp)
+        )
         Text(
             text = text,
             style = MaterialTheme.typography.bodySmall,
             color = c.text,
             modifier = Modifier.weight(1f)
         )
-        PillButton(text = "Dismiss", onClick = onDismiss)
+        /* A close, not a button: the bar is a notice, and "Dismiss" made
+           it look like something that needed confirming. */
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(c.surface2)
+                .clickableNoRipple(onDismiss),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Outlined.Close,
+                contentDescription = "Dismiss",
+                tint = c.dim,
+                modifier = Modifier.size(15.dp)
+            )
+        }
     }
 }

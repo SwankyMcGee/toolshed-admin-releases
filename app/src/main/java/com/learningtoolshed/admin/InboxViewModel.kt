@@ -34,6 +34,10 @@ data class Filters(
 
 enum class LoadState { Idle, Loading, Ready, Failed, NotConfigured }
 
+/* How long a registry read is considered current. Signing in and the
+   launch path both want one; neither wants two. */
+private const val MANIFEST_TTL = 3 * 60 * 1000L
+
 data class InboxState(
     val ideas: List<Idea> = emptyList(),
     val filters: Filters = Filters(),
@@ -100,6 +104,32 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(InboxState())
     val state: StateFlow<InboxState> = _state.asStateFlow()
 
+    /* When the registry was last asked for over the network. Short
+       enough that a settings change is picked up, long enough that
+       signing in does not ask twice. */
+    private var manifestLoadedAt = 0L
+
+    /**
+     * A credential the server refused, as opposed to a request that
+     * failed. Retrying cannot fix either case, so the session is
+     * dropped and the screen is told once — which is what puts the
+     * sign-in button back in Settings instead of the app quietly
+     * failing on every launch until the token's hour is up.
+     *
+     * Only the local half is cleared: the Google account stays granted,
+     * so the next launch re-authorises silently.
+     */
+    private fun handleCredential(err: Exception) {
+        val why = (err as? AdminException)?.message ?: return
+        if (why != "token expired" && why != "bad token") return
+        if (!client.usesGoogle) return
+        client.signOut()
+        _state.value = _state.value.copy(
+            signedInEmail = null,
+            signInError = "Your sign-in expired. Sign in again to keep reading."
+        )
+    }
+
     var paletteId: String
         get() = client.paletteId
         set(value) { client.paletteId = value }
@@ -162,8 +192,9 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
             }
             /* The inbox, and the registry: the first of these is the
                point of signing in, the second was skipped on launch
-               because there was no credential to ask with. */
-            loadManifest()
+               because there was no credential to ask with. `check` is
+               false — the call above already asked. */
+            loadManifest(check = false)
             refresh(showProgress = true)
         }
     }
@@ -271,6 +302,7 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
             } catch (err: Exception) {
                 /* A failed sync is not an empty inbox: keep what's on
                    screen (or in the cache) and say what happened. */
+                handleCredential(err)
                 _state.value = _state.value.copy(
                     ideas = if (_state.value.ideas.isEmpty()) client.cachedIdeas()
                     else _state.value.ideas,
@@ -290,7 +322,7 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
      * Loads the copy bundled in the APK first (so the very first screen
      * is already right), then asks the backend and remembers the answer.
      */
-    fun loadManifest() {
+    fun loadManifest(check: Boolean = true) {
         val app = getApplication<Application>()
         val bundled = runCatching { SiteRegistry.bundled(app) }
             .getOrDefault(SiteManifest.empty())
@@ -302,12 +334,17 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
         )
         if (!client.isConfigured()) return
 
+        /* One registry read per launch is enough: signing in already
+           asked the server for itself, and a second identical round
+           trip on top of it is pure latency. `check` is the switch the
+           sign-in path uses to say "already done". */
+        val now = System.currentTimeMillis()
+        if (!check && now - manifestLoadedAt < MANIFEST_TTL) return
+        manifestLoadedAt = now
+
         viewModelScope.launch {
             try {
-                /* Ask the backend what it knows about itself first: the
-                   API level decides whether usage can be rolled up, and
-                   the minimum decides whether this build is too old. */
-                withContext(Dispatchers.IO) { client.check() }
+                if (check) withContext(Dispatchers.IO) { client.check() }
                 val fresh = withContext(Dispatchers.IO) { client.manifest(bundled) }
                 _state.value = _state.value.copy(
                     manifest = fresh,
@@ -316,6 +353,7 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
             } catch (err: Exception) {
                 /* Offline, or an old backend. The bundled copy is a
                    complete registry, so the app carries on. */
+                handleCredential(err)
                 _state.value = _state.value.copy(
                     manifest = _state.value.manifest,
                     minSupportedVersionCode = client.minSupportedVersionCode
@@ -482,6 +520,7 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
                 )
             } catch (err: Exception) {
                 /* Keep the cached rollup on screen if there is one. */
+                handleCredential(err)
                 val cached = client.cachedUsage()?.let { UsageStats.fromPayload(it, manifest) }
                 _state.value = _state.value.copy(
                     usage = cached ?: _state.value.usage,

@@ -17,10 +17,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Construction
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -121,21 +127,27 @@ fun IdeaSheet(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Label(idea.type.uppercase())
+            MetaChip(
+                text = idea.type.uppercase(),
+                accent = true,
+                icon = if (idea.isFeature) Icons.Outlined.Lightbulb else Icons.Outlined.Construction
+            )
             if (idea.isFeature && idea.tool.isNotBlank()) {
-                Label(idea.tool)
+                MetaChip(text = idea.tool)
             }
             Box(modifier = Modifier.weight(1f))
             Text(
-                text = Clock.formatIdea(idea.whenIso),
+                text = Clock.relative(idea.whenIso),
                 style = MaterialTheme.typography.bodySmall,
                 color = c.dim
             )
         }
 
+        /* The idea is what the sheet was opened for, so it leads at the
+           size a headline would. */
         Text(
             text = idea.idea,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.titleMedium,
             color = c.text
         )
 
@@ -205,17 +217,17 @@ fun IdeaSheet(
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
                                 text = reply.author,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelMedium,
                                 color = c.accent,
                                 modifier = Modifier.weight(1f)
                             )
                             Text(
-                                text = Clock.formatIdea(reply.whenIso),
+                                text = Clock.relative(reply.whenIso),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = c.dim
                             )
@@ -249,7 +261,7 @@ fun IdeaSheet(
                    is still saved in the thread, but goes out from the
                    admin's own mail client. */
                 if (replyDraft.isNotBlank()) {
-                    PillButton(
+                    TextAction(
                         text = "Open in mail",
                         onClick = {
                             onShareReply(replyDraft)
@@ -295,22 +307,37 @@ fun SettingsSheet(
         if (googleReady) {
             Text(
                 text = "SIGN IN",
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.labelMedium,
                 color = c.dim
             )
 
             if (signedInEmail != null) {
+                /* The account as a card: an initial in a tinted circle,
+                   the address beside it, and sign-out as a quiet verb
+                   rather than a button that competes with the address. */
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(c.surface2)
-                        .border(1.dp, c.border, RoundedCornerShape(10.dp))
+                        .border(1.dp, c.border, RoundedCornerShape(12.dp))
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(c.accent.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = signedInEmail.first().uppercase(),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = c.accent
+                        )
+                    }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Signed in as",
@@ -324,7 +351,7 @@ fun SettingsSheet(
                             fontWeight = FontWeight.Bold
                         )
                     }
-                    PillButton(text = "Sign out", onClick = onSignOut)
+                    TextAction(text = "Sign out", onClick = onSignOut)
                 }
             } else {
                 Text(
@@ -350,11 +377,27 @@ fun SettingsSheet(
             }
 
             signInError?.let { message ->
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.text
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(c.accent.copy(alpha = 0.10f))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.ErrorOutline,
+                        contentDescription = null,
+                        tint = c.accent,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.text
+                    )
+                }
             }
         } else {
             Text(
@@ -366,8 +409,7 @@ fun SettingsSheet(
 
         Text(
             text = "ENDPOINT",
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.labelMedium,
             color = c.dim
         )
         TextFieldLike(
@@ -376,13 +418,26 @@ fun SettingsSheet(
             minLines = 2
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             PillButton(
                 text = "Save",
                 filled = true,
                 onClick = { onSave(url.trim()) }
             )
-            PillButton(text = "Cancel", onClick = onDismiss)
+            TextAction(text = "Cancel", onClick = onDismiss)
+
+            /* The build, quietly, at the end: the one thing to read out
+               when someone reports a problem. */
+            Box(modifier = Modifier.weight(1f))
+            Text(
+                text = "v${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.bodySmall,
+                color = c.dim
+            )
         }
     }
 }

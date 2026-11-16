@@ -71,13 +71,22 @@ class SyncWorker(
         } catch (err: Exception) {
             /* Retry with backoff — the sheet or the network will
                probably be there next time. */
-            if (err is AdminException && err.message == "forbidden") {
-                Result.failure()   // sign-in refused; retrying won't help
+            if (err is AdminException && err.message in TERMINAL) {
+                /* A refused credential is still refused in fifteen
+                   minutes, so stop the backoff and drop the stale token
+                   — the next launch then asks for a sign-in instead of
+                   failing quietly every quarter of an hour. */
+                client.signOut()
+                Result.failure()
             } else {
                 Result.retry()
             }
         }
     }
+
+    /* Server answers that a retry cannot change: no credential, a
+       credential it refused, or a server that cannot check one. Kept
+       next to the rest of the worker's constants, below. */
 
     private fun notify(app: Context, ideas: List<Idea>) {
         /* Android 13+ needs the runtime grant before we can post. If
@@ -136,5 +145,18 @@ class SyncWorker(
         /* How often the periodic job runs. Android floors this at 15
            minutes and may batch it with other apps' jobs. */
         const val PERIODIC_MINUTES = 15L
+
+        /* Server answers that a retry cannot change: no credential, a
+           credential it refused, or a server that cannot check one. A
+           quarter-hour of backoff aimed at any of these is a phone
+           waking up all night to be told the same thing. */
+        val TERMINAL = setOf(
+            "forbidden",
+            "token expired",
+            "bad token",
+            "no credential",
+            "google sign-in not configured",
+            "key sign-in was removed; update the app"
+        )
     }
 }

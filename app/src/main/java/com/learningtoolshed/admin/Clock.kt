@@ -29,6 +29,26 @@ object Clock {
         }
     }
 
+    /** How long ago, in the fewest words that are still honest.
+        "Today, 9:04 AM" is right for the sheet a reply was sent from
+        and too much for a card someone is scanning; here the age is
+        what matters, and it falls back to the full date once the age
+        stops being interesting. */
+    fun relative(iso: String): String {
+        val date = parse(iso) ?: return iso
+        val diff = System.currentTimeMillis() - date.time
+        if (diff < 0) return formatIdea(iso)
+
+        val minutes = diff / 60_000L
+        return when {
+            minutes < 1 -> "just now"
+            minutes < 60 -> "${minutes}m ago"
+            minutes < 60 * 24 -> "${minutes / 60}h ago"
+            minutes < 60 * 48 -> "yesterday"
+            else -> formatIdea(iso)
+        }
+    }
+
     /** The ISO string from the sheet as epoch millis, or null when it
         isn't a date at all. */
     fun parse(iso: String): java.util.Date? {

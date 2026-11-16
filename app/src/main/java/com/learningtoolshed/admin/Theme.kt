@@ -117,14 +117,19 @@ fun ToolshedTheme(paletteId: String, content: @Composable () -> Unit) {
 
 @Composable
 private fun Shapes() = androidx.compose.material3.Shapes(
-    small = RoundedCornerShape(8.dp),
-    medium = RoundedCornerShape(10.dp),
-    large = RoundedCornerShape(12.dp),
-    extraLarge = RoundedCornerShape(16.dp)
+    small = RoundedCornerShape(10.dp),
+    medium = RoundedCornerShape(12.dp),
+    large = RoundedCornerShape(16.dp),
+    extraLarge = RoundedCornerShape(20.dp)
 )
 
 /* ---------- typography ----------
-   Sans-serif, exactly like the site's font stack. */
+   Sans-serif, exactly like the site's font stack.
+
+   Four styles cover the app: titles for screens and sheets, the idea
+   text itself, body for everything else, and labels for the small
+   caps-ish marks (chips, counts, section labels). Nothing else is
+   used, so the type stays consistent without a scale to maintain. */
 private val ToolshedTypography = androidx.compose.material3.Typography(
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -136,7 +141,13 @@ private val ToolshedTypography = androidx.compose.material3.Typography(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Bold,
         fontSize = 18.sp,
-        lineHeight = 24.sp
+        lineHeight = 25.sp
+    ),
+    titleSmall = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Bold,
+        fontSize = 16.sp,
+        lineHeight = 22.sp
     ),
     bodyMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -147,6 +158,12 @@ private val ToolshedTypography = androidx.compose.material3.Typography(
         fontFamily = FontFamily.SansSerif,
         fontSize = 13.sp,
         lineHeight = 19.sp
+    ),
+    labelMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.Bold,
+        fontSize = 12.sp,
+        lineHeight = 16.sp
     )
 )
 
@@ -187,26 +204,6 @@ fun Card(
     }
 }
 
-/** `.lbl` — the site's inline mark for exact on-screen wording. */
-@Composable
-fun Label(text: String) {
-    val c = MaterialTheme.toolshed
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(c.surface2)
-            .border(1.dp, c.border, RoundedCornerShape(6.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp)
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Bold,
-            color = c.text
-        )
-    }
-}
-
 /** A pill button, like `.idea-again`. */
 @Composable
 fun PillButton(
@@ -235,6 +232,32 @@ fun PillButton(
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
             color = if (filled) c.accentText else c.accent
+        )
+    }
+}
+
+/** A quiet text action — the accent, no fill, no border. Used where a
+    pill would shout louder than the thing it belongs to: the row of
+    actions under the filters, "Open in mail" beside Send. */
+@Composable
+fun TextAction(
+    text: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val c = MaterialTheme.toolshed
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .clickableNoRipple(onClick)
+            .heightIn(min = 40.dp)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = c.accent
         )
     }
 }
