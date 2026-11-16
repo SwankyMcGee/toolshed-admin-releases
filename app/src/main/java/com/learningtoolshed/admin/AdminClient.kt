@@ -15,9 +15,7 @@ import java.net.URLEncoder
    coroutines-adapter — one APK, one less thing to break.
 
     Every call needs the same two settings: the Apps Script /exec URL
-    and something the server will accept as an admin — a Google ID
-    token (the normal case) or, on an older deployment, the shared key
-    (ideas-engine/ADMIN.md). They live in Prefs.
+    and a Google sign-in (ideas-engine/ADMIN.md). Both live in Prefs.
 
     API version 6 (this build) — every admin call is a POST:
 
@@ -74,10 +72,6 @@ class AdminClient(private val app: Context) {
     var endpoint: String
         get() = prefs.getString(KEY_ENDPOINT, DEFAULT_ENDPOINT) ?: DEFAULT_ENDPOINT
         set(value) = prefs.edit().putString(KEY_ENDPOINT, value.trim()).apply()
-
-    var key: String
-        get() = prefs.getString(KEY_KEY, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_KEY, value.trim()).apply()
 
     /* ---------- who is asking ----------
 
@@ -141,10 +135,9 @@ class AdminClient(private val app: Context) {
         minSupportedVersionCode > 0 && BuildConfig.VERSION_CODE < minSupportedVersionCode
 
     /* True when there is somewhere to send a request and something the
-       server will accept. Either credential will do; the token wins
-       when both are present. */
-    fun isConfigured(): Boolean =
-        endpoint.isNotBlank() && (idToken.isNotBlank() || key.isNotBlank())
+       server will accept. There is only one credential now: the Google
+       ID token. */
+    fun isConfigured(): Boolean = endpoint.isNotBlank() && idToken.isNotBlank()
 
     /** True when the Google session is the credential in use. */
     val usesGoogle: Boolean get() = idToken.isNotBlank()
@@ -159,37 +152,34 @@ class AdminClient(private val app: Context) {
     /* ---------- requests ---------- */
 
     /**
-     * Every admin call, reads included. The credential — a Google ID
-     * token where there is one, the shared key otherwise — goes in the
-     * body only.
+     * Every admin call, reads included. The credential — the Google ID
+     * token — goes in the body only.
      *
      * A single request style also means the backend needs one door for
      * admin traffic rather than two that can drift apart — and it means
      * a credential can never reach a query string by accident.
      */
     private fun post(action: String, params: Map<String, String> = emptyMap()): JSONObject {
-        val body = formBody(idToken, key, action, params).toByteArray()
+        val body = formBody(idToken, action, params).toByteArray()
         return request(body)
     }
 
     /* ---------- the one public action ----------
 
-       `authconfig` answers which Google client to ask for and whether
-       the server will take a key at all. It is a POST like everything
-       else — the rule about credentials in URLs does not stop applying
-       just because this one has no credential — and it is cached, so
-       opening Settings twice is one call, not two. */
+       `authconfig` answers which Google client to ask for. It is a POST
+       like everything else — the rule about credentials in URLs does not
+       stop applying just because this one has no credential — and it is
+       cached, so opening Settings twice is one call, not two. */
     fun authConfig(force: Boolean = false): AuthConfig {
         if (!force && authClientId.isNotBlank()) {
-            return AuthConfig(clientId = authClientId, google = true, key = key.isNotBlank())
+            return AuthConfig(clientId = authClientId, google = true)
         }
         val obj = request(actionBody("authconfig").toByteArray())
         val clientId = obj.optString("clientId")
         if (clientId.isNotBlank()) authClientId = clientId
         return AuthConfig(
             clientId = clientId,
-            google = obj.optBoolean("google", clientId.isNotBlank()),
-            key = obj.optBoolean("key", key.isNotBlank())
+            google = obj.optBoolean("google", clientId.isNotBlank())
         )
     }
 
@@ -478,7 +468,6 @@ class AdminClient(private val app: Context) {
 
     companion object {
         const val KEY_ENDPOINT = "endpoint"
-        const val KEY_KEY = "key"
         const val KEY_ID_TOKEN = "idToken"
         const val KEY_ACCOUNT = "account"
         const val KEY_AUTH_CLIENT = "authClient"
@@ -497,11 +486,10 @@ class AdminClient(private val app: Context) {
 /** What the server said about how it wants to be signed in to. */
 data class AuthConfig(
     val clientId: String,
-    val google: Boolean,
-    val key: Boolean
+    val google: Boolean
 ) {
-    /** True when there is nothing here to offer: no Google, no key. */
-    val empty: Boolean get() = !google && !key
+    /** True when there is nothing here to offer. */
+    val empty: Boolean get() = !google
 }
 
 /* ============================================================
@@ -509,16 +497,10 @@ data class AuthConfig(
 
    It is a top-level function, not a private method, for one reason: the
    credential has to be in here and must never reach a URL, and that is
-   worth a test. A key containing '&' or '=' or '+' is perfectly
-   possible — it's whatever the admin pasted in — and an unescaped one
-   silently becomes two parameters, which reads as "forbidden" with no
-   clue why. An ID token has the same problem: it is three base64 parts
-   joined by dots, and base64 is full of '=' padding.
-
-   The token is sent when there is one; the key is the fallback for a
-   deployment that has not moved over. The server prefers the token
-   when both arrive, so an app mid-migration is never judged on the half
-   it is leaving behind.
+   worth a test. An ID token is three base64 parts joined by dots, and
+   base64 is full of '=' padding — unescaped, that padding becomes a
+   second parameter and Google's tokeninfo answers "bad token" with
+   nothing to explain why.
    ============================================================ */
 
 internal fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
@@ -535,14 +517,9 @@ internal fun actionBody(
 
 internal fun formBody(
     idToken: String,
-    key: String,
     action: String,
     params: Map<String, String> = emptyMap()
-): String {
-    val credential =
-        if (idToken.isNotBlank()) "idToken=" + enc(idToken) else "key=" + enc(key)
-    return credential + "&" + actionBody(action, params)
-}
+): String = "idToken=" + enc(idToken) + "&" + actionBody(action, params)
 
 class AdminException(message: String) : Exception(message)
 

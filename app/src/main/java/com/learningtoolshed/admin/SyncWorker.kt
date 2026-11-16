@@ -72,7 +72,7 @@ class SyncWorker(
             /* Retry with backoff — the sheet or the network will
                probably be there next time. */
             if (err is AdminException && err.message == "forbidden") {
-                Result.failure()   // wrong key; retrying won't help
+                Result.failure()   // sign-in refused; retrying won't help
             } else {
                 Result.retry()
             }

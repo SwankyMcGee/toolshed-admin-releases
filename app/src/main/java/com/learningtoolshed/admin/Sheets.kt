@@ -267,7 +267,7 @@ fun IdeaSheet(
 @Composable
 fun SettingsSheet(
     onDismiss: () -> Unit,
-    onSave: (String, String) -> Unit,
+    onSave: (String) -> Unit,
     signedInEmail: String? = null,
     googleReady: Boolean = false,
     signingIn: Boolean = false,
@@ -278,7 +278,6 @@ fun SettingsSheet(
     val app = LocalContext.current.applicationContext
     val client = remember { AdminClient(app) }
     var url by remember { mutableStateOf(client.endpoint) }
-    var key by remember { mutableStateOf(client.key) }
     val c = MaterialTheme.toolshed
 
     SheetFrame(onDismiss = onDismiss) {
@@ -290,10 +289,9 @@ fun SettingsSheet(
         )
 
         /* ---------- Google sign-in ----------
-           The normal way in, and the one that means there is no key to
-           type, copy, or lose. The button is offered only when the
-           server says it will accept one — a deployment that has not
-           set up Google gets the key field and nothing else. */
+           The only way in. The button is offered only when the server
+           says it will accept one — a deployment that has not set up
+           Google gets an explanation instead of a dead button. */
         if (googleReady) {
             Text(
                 text = "SIGN IN",
@@ -358,6 +356,12 @@ fun SettingsSheet(
                     color = c.text
                 )
             }
+        } else {
+            Text(
+                text = "This server has no Google sign-in configured. The Apps Script needs OAUTH_CLIENT_ID and an allowlist before it will let anyone in.",
+                style = MaterialTheme.typography.bodySmall,
+                color = c.dim
+            )
         }
 
         Text(
@@ -372,32 +376,11 @@ fun SettingsSheet(
             minLines = 2
         )
 
-        /* The key is still accepted by older deployments, so the field
-           stays — but it says what it is now: a fallback for a server
-           that has not moved to Google sign-in. */
-        Text(
-            text = if (googleReady) "ADMIN KEY (OPTIONAL)" else "ADMIN KEY",
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Bold,
-            color = c.dim
-        )
-        TextFieldLike(
-            value = key,
-            onValueChange = { key = it }
-        )
-        if (googleReady) {
-            Text(
-                text = "Only needed until the server moves to Google sign-in. Leave it blank.",
-                style = MaterialTheme.typography.bodySmall,
-                color = c.dim
-            )
-        }
-
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             PillButton(
                 text = "Save",
                 filled = true,
-                onClick = { onSave(url.trim(), key.trim()) }
+                onClick = { onSave(url.trim()) }
             )
             PillButton(text = "Cancel", onClick = onDismiss)
         }

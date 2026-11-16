@@ -60,7 +60,6 @@ data class InboxState(
     val signedInEmail: String? = null,
     val authClientId: String = "",
     val authGoogle: Boolean = false,
-    val authKey: Boolean = false,
     val signingIn: Boolean = false,
     val signInError: String? = null
 ) {
@@ -106,11 +105,9 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
         set(value) { client.paletteId = value }
 
     val endpoint: String get() = client.endpoint
-    val key: String get() = client.key
 
-    fun saveConnection(endpoint: String, key: String) {
+    fun saveConnection(endpoint: String) {
         client.endpoint = endpoint
-        client.key = key
         refresh()
     }
 
@@ -135,8 +132,7 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(
             signedInEmail = client.accountEmail.takeIf { it.isNotBlank() },
             authClientId = cfg?.clientId ?: client.authClientId,
-            authGoogle = cfg?.google ?: client.authClientId.isNotBlank(),
-            authKey = cfg?.key ?: client.key.isNotBlank()
+            authGoogle = cfg?.google ?: client.authClientId.isNotBlank()
         )
         return cfg
     }
@@ -549,7 +545,7 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun describe(err: Exception): String = when {
         err is AdminException && err.message == "forbidden" ->
-            "The key was refused. Check it in Settings."
+            "Sign-in was refused. Open Settings and sign in with Google."
         /* The Google path, in the server's own words. Each one is a
            different job for the person holding the phone, which is why
            v6 stopped answering "forbidden" to all of them. */
@@ -562,14 +558,16 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
         err is AdminException && err.message == "token check failed" ->
             "Couldn't check your sign-in with Google. Try again in a moment."
         err is AdminException && err.message == "google sign-in not configured" ->
-            "This server has Google sign-in switched off. The Apps Script needs ANDROID_OAUTH_CLIENT_ID and ADMIN_EMAILS in its properties."
+            "This server has Google sign-in switched off. The Apps Script needs OAUTH_CLIENT_ID and an allowlist in its properties."
         err is AdminException && err.message == "no credential" ->
             "Nothing was sent to sign in with. Open Settings and sign in with Google."
+        err is AdminException && err.message == "key sign-in was removed; update the app" ->
+            "This build is too old to sign in. Update from the releases page."
         /* The server answered — with the one sentence an Ideas Engine
            older than v5 says about a POST it doesn't route. Reads moved
-           from GET to POST in v5, so an older deployment accepts the
-           key and then has nothing to do with action=ideas or
-           action=usage. The redeploy is the fix; this is how you know. */
+           from GET to POST in v5, so an older deployment has nothing to
+           do with action=ideas or action=usage. The redeploy is the fix;
+           this is how you know. */
         err is AdminException && err.message == "unknown action" ->
             "The server is running an older Ideas Engine: it doesn't answer admin reads over POST. Redeploy the Apps Script — Deploy → Manage deployments → edit → New version → Deploy."
         err is java.net.UnknownHostException ->
