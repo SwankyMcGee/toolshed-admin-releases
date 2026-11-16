@@ -113,6 +113,9 @@ class SyncWorker(
 
         val notification = NotificationCompat.Builder(app, ToolshedApp.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_bell)
+            /* Monochrome small icon (Android tints it); the launcher
+               plate as the large one, so the brand travels. */
+            .setLargeIcon(android.graphics.drawable.Icon.createWithResource(app, R.mipmap.ic_launcher))
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))

@@ -263,7 +263,7 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-private fun isDark(color: Color): Boolean {
+internal fun isDark(color: Color): Boolean {
     val l = 0.299 * color.red + 0.587 * color.green + 0.114 * color.blue
     return l < 0.5f
 }

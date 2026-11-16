@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The plate the logo sits on. The light logo needs a dark ground —
+     on a pale background its own pale lines would disappear — so the
+     icon uses the "dark" palette's background rather than the calm
+     one the app opens in. -->
 <resources>
-    <color name="ic_launcher_background">#4D84A6</color>
+    <color name="ic_launcher_background">#151A20</color>
 </resources>

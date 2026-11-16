@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -273,24 +272,32 @@ private fun InboxScreen(
                     title = "Not connected yet",
                     body = "Add the Ideas Engine URL and the admin key to start reading ideas.",
                     action = "Open settings",
-                    onAction = onOpenSettings
+                    onAction = onOpenSettings,
+                    showLogo = true
                 )
 
             state.ideas.isEmpty() && state.load == LoadState.Loading ->
-                CenteredMessage(title = "Looking…", body = "Reading the Ideas Engine sheet.")
+                CenteredMessage(
+                    title = "Looking…",
+                    body = "Reading the Ideas Engine sheet.",
+                    showLogo = true,
+                    logoLoading = true
+                )
 
             state.ideas.isEmpty() && state.load == LoadState.Failed ->
                 CenteredMessage(
                     title = "Couldn't read the ideas",
                     body = state.message ?: "Check the connection and try again.",
                     action = "Try again",
-                    onAction = onRefresh
+                    onAction = onRefresh,
+                    showLogo = true
                 )
 
             state.ideas.isEmpty() ->
                 CenteredMessage(
                     title = "Nothing in the shed yet",
-                    body = "Ideas from the site land here the moment someone sends one."
+                    body = "Ideas from the site land here the moment someone sends one.",
+                    showLogo = true
                 )
 
             state.visible.isEmpty() ->
@@ -339,14 +346,9 @@ private fun TopBar(
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "The Learning Toolshed",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = c.text,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            /* The site's logo, not a text title — the logo already
+               carries the words, so the heading was saying them twice. */
+            BrandMarkH(height = 30.dp)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -362,15 +364,11 @@ private fun TopBar(
             }
         }
 
-        if (syncing) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(18.dp),
-                strokeWidth = 2.dp,
-                color = c.accent
-            )
+        /* While a sync is running the refresh icon itself becomes the
+           logo, turning — the same mark, doing the work. */
+        HeaderIconButton(label = "Refresh", onClick = onRefresh) {
+            if (syncing) BrandSpinner() else IconRefresh()
         }
-
-        HeaderIconButton(label = "Refresh", onClick = onRefresh) { IconRefresh() }
         HeaderIconButton(label = "Palette", onClick = onPalette) { IconPalette() }
         HeaderIconButton(label = "Settings", onClick = onSettings) { IconGear() }
     }
@@ -664,7 +662,9 @@ private fun CenteredMessage(
     title: String,
     body: String,
     action: String? = null,
-    onAction: (() -> Unit)? = null
+    onAction: (() -> Unit)? = null,
+    showLogo: Boolean = false,
+    logoLoading: Boolean = false
 ) {
     val c = MaterialTheme.toolshed
     Box(
@@ -675,6 +675,17 @@ private fun CenteredMessage(
     ) {
         Card(primary = true) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                /* The logo, not a spinner, on the states that are about
+                   the app itself rather than about the ideas: not
+                   connected, waiting, failed. "No ideas match" is about
+                   the filter, so it stays text. */
+                if (showLogo) {
+                    BrandMarkH(
+                        height = if (logoLoading) 54.dp else 42.dp,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                        loading = logoLoading
+                    )
+                }
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,

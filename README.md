@@ -66,6 +66,30 @@ The palettes and the "shape" of the UI (cards, pills, chips) mirror
 `site.css` and `site.js`. If you change a palette on the site, change it
 here too (`Palette.kt`), and the app keeps looking like the same shed.
 
+The logo is the site's logo, not a drawing of one. `site.css` swaps
+`toolshed-logo.png` for `toolshed-logo-light.png` on the dark themes;
+`Brand.kt` picks between the same two files the same way, so a palette
+change never leaves the brand upside down.
+
+- `res/drawable-nodpi/ic_logo.png` — from the site's `toolshed-logo.png`
+- `res/drawable-nodpi/ic_logo_inverse.png` — from `toolshed-logo-light.png`
+
+Both are trimmed to the artwork's own bounding box (308×202) so the app
+lays them out at their real shape instead of the site's 600×335 canvas,
+which is mostly transparent padding. When the logo changes on the site,
+copy the two files over and re-trim.
+
+The launcher icon is the inverse logo on a `#151A20` plate (the "dark"
+palette's background — the light artwork needs a dark ground). The
+adaptive foreground and the five legacy `mipmap-*` densities are baked
+from the same source.
+
+The mark is also the refresh indicator: while a sync runs, the header's
+refresh icon turns into the logo, turning (`BrandSpinner`). `ic_bell`
+stays the notification's small icon — Android tints small icons, so a
+coloured logo would arrive as a blob; the launcher plate is the large
+icon instead.
+
 ## Deliberate limits
 
 - Writes are optimistic in memory and reported rather than queued; a

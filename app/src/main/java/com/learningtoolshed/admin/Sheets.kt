@@ -276,6 +276,7 @@ fun SettingsSheet(
     val c = MaterialTheme.toolshed
 
     SheetFrame(onDismiss = onDismiss) {
+        BrandMarkH(height = 36.dp)
         Text(
             text = "Connection",
             style = MaterialTheme.typography.titleMedium,

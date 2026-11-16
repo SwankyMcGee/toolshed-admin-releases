@@ -443,6 +443,11 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
 
         val notification = NotificationCompat.Builder(app, ToolshedApp.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_bell)
+            /* The small icon stays the monochrome bell — Android tints
+               it, and a coloured logo would arrive as a blob. The large
+               one is the launcher plate, so the notification carries the
+               brand the app does. */
+            .setLargeIcon(android.graphics.drawable.Icon.createWithResource(app, R.mipmap.ic_launcher))
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
