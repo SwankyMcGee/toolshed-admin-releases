@@ -164,6 +164,10 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
                    almost always the allowlist, and the sentence says so. */
                 _state.value = _state.value.copy(signInError = describe(err))
             }
+            /* The inbox, and the registry: the first of these is the
+               point of signing in, the second was skipped on launch
+               because there was no credential to ask with. */
+            loadManifest()
             refresh(showProgress = true)
         }
     }
