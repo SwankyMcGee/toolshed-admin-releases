@@ -82,6 +82,10 @@ fun ToolshedAppRoot(
     onSendReply: (Int, String) -> Unit,
     onShareReply: (String) -> Unit,
     onSaveConnection: (String, String) -> Unit,
+    /* Google sign-in. The button lives in Settings; the work needs an
+       Activity, so MainActivity owns it and this only carries the call. */
+    onSignIn: () -> Unit,
+    onSignOut: () -> Unit,
     onDismissMessage: () -> Unit,
     onLoadUsage: () -> Unit,
     onLoadManifest: () -> Unit,
@@ -205,7 +209,13 @@ fun ToolshedAppRoot(
     when (dialog) {
         Dialog.Settings -> SettingsSheet(
             onDismiss = { dialog = Dialog.None },
-            onSave = { url, key -> onSaveConnection(url, key); dialog = Dialog.None }
+            onSave = { url, key -> onSaveConnection(url, key); dialog = Dialog.None },
+            signedInEmail = state.signedInEmail,
+            googleReady = state.authGoogle,
+            signingIn = state.signingIn,
+            signInError = state.signInError,
+            onSignIn = onSignIn,
+            onSignOut = onSignOut
         )
 
         Dialog.Palette -> PaletteSheet(
@@ -270,7 +280,7 @@ private fun InboxScreen(
             state.load == LoadState.NotConfigured ->
                 CenteredMessage(
                     title = "Not connected yet",
-                    body = "Add the Ideas Engine URL and the admin key to start reading ideas.",
+                    body = "Sign in with Google, or add the Ideas Engine URL and the admin key, to start reading ideas.",
                     action = "Open settings",
                     onAction = onOpenSettings,
                     showLogo = true

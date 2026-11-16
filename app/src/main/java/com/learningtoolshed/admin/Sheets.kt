@@ -267,7 +267,13 @@ fun IdeaSheet(
 @Composable
 fun SettingsSheet(
     onDismiss: () -> Unit,
-    onSave: (String, String) -> Unit
+    onSave: (String, String) -> Unit,
+    signedInEmail: String? = null,
+    googleReady: Boolean = false,
+    signingIn: Boolean = false,
+    signInError: String? = null,
+    onSignIn: () -> Unit = {},
+    onSignOut: () -> Unit = {}
 ) {
     val app = LocalContext.current.applicationContext
     val client = remember { AdminClient(app) }
@@ -282,11 +288,77 @@ fun SettingsSheet(
             style = MaterialTheme.typography.titleMedium,
             color = c.text
         )
-        Text(
-            text = "Paste the Ideas Engine /exec URL and the admin key. Both stay on this device.",
-            style = MaterialTheme.typography.bodySmall,
-            color = c.dim
-        )
+
+        /* ---------- Google sign-in ----------
+           The normal way in, and the one that means there is no key to
+           type, copy, or lose. The button is offered only when the
+           server says it will accept one — a deployment that has not
+           set up Google gets the key field and nothing else. */
+        if (googleReady) {
+            Text(
+                text = "SIGN IN",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Bold,
+                color = c.dim
+            )
+
+            if (signedInEmail != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(c.surface2)
+                        .border(1.dp, c.border, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Signed in as",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.dim
+                        )
+                        Text(
+                            text = signedInEmail,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.text,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    PillButton(text = "Sign out", onClick = onSignOut)
+                }
+            } else {
+                Text(
+                    text = "Your Google account is sent as a short-lived token, not stored. The server checks it against its list of allowed addresses.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.dim
+                )
+                PillButton(
+                    text = if (signingIn) "Signing in…" else "Sign in with Google",
+                    filled = true,
+                    onClick = onSignIn
+                )
+                if (signingIn) {
+                    /* The picker is Google's own, over the top of this
+                       sheet, so there is nothing to draw here — only the
+                       line that says the app is waiting. */
+                    Text(
+                        text = "Waiting for Google…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.dim
+                    )
+                }
+            }
+
+            signInError?.let { message ->
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.text
+                )
+            }
+        }
 
         Text(
             text = "ENDPOINT",
@@ -300,8 +372,11 @@ fun SettingsSheet(
             minLines = 2
         )
 
+        /* The key is still accepted by older deployments, so the field
+           stays — but it says what it is now: a fallback for a server
+           that has not moved to Google sign-in. */
         Text(
-            text = "ADMIN KEY",
+            text = if (googleReady) "ADMIN KEY (OPTIONAL)" else "ADMIN KEY",
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Bold,
             color = c.dim
@@ -310,6 +385,13 @@ fun SettingsSheet(
             value = key,
             onValueChange = { key = it }
         )
+        if (googleReady) {
+            Text(
+                text = "Only needed until the server moves to Google sign-in. Leave it blank.",
+                style = MaterialTheme.typography.bodySmall,
+                color = c.dim
+            )
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             PillButton(

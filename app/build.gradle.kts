@@ -1,6 +1,7 @@
 // The Learning Toolshed — Toolshed Admin
 // One module, no server of its own: it talks to the Ideas Engine
-// Apps Script (SwankyMcGee.github.io/ideas-engine) with a shared key.
+// Apps Script (SwankyMcGee.github.io/ideas-engine), signed in with
+// Google (API 6) and, for older deployments, with a shared key.
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -42,8 +43,8 @@ android {
         applicationId = "com.learningtoolshed.admin"
         minSdk = 24
         targetSdk = 35
-    versionCode = 13
-    versionName = "1.12"
+        versionCode = 14
+        versionName = "1.13"
     }
 
     signingConfigs {
@@ -118,6 +119,15 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
+
+    /* Google sign-in (API 6). Credential Manager owns the account
+       picker and the silent re-auth; the Google ID library turns what
+       comes back into the ID token the backend verifies. Three small
+       dependencies rather than play-services-auth, which would drag the
+       whole of Play services in for one button. */
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

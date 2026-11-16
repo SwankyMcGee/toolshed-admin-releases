@@ -166,6 +166,58 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            /* ---------- Google sign-in ----------
+
+               The credential picker is a piece of Google's UI, and it
+               has to be launched from an Activity — so the button is
+               here even though the button itself is drawn in Settings.
+               The ViewModel keeps the token and does the asking. */
+            fun signIn() {
+                scope.launch {
+                    val cfg = withContext(Dispatchers.IO) { vm.authConfigNow() }
+                    if (cfg == null || cfg.clientId.isBlank()) {
+                        vm.onSignInFailed(
+                            "Couldn't ask the server how to sign in. " +
+                                "Check the connection and try again."
+                        )
+                        return@launch
+                    }
+                    if (!cfg.google) {
+                        vm.onSignInFailed("This server has no Google sign-in set up.")
+                        return@launch
+                    }
+                    vm.markSigningIn()
+                    GoogleAuth.signIn(
+                        this@MainActivity,
+                        cfg.clientId,
+                        scope,
+                        onResult = { result ->
+                            when (result) {
+                                is GoogleAuth.Result.SignedIn -> vm.onSignedIn(result.idToken)
+                                is GoogleAuth.Result.Failed -> vm.onSignInFailed(result.message)
+                            }
+                        }
+                    )
+                }
+            }
+
+            /* On launch: ask the server how it wants to be signed in
+               to, and if a Google session is already known, use it
+               without showing anything. A failure here is ordinary —
+               a fresh install has no granted account yet — so it is
+               swallowed and the Settings button is left to do the
+               work. */
+            LaunchedEffect(Unit) {
+                /* One call: it both fills in what Settings shows and
+                   tells us whether a silent attempt can work. */
+                val cfg = vm.loadAuth()
+                if (vm.hasStoredSession()) return@LaunchedEffect
+                if (cfg == null || !cfg.google || cfg.clientId.isBlank()) return@LaunchedEffect
+                GoogleAuth.trySilent(this@MainActivity, cfg.clientId, scope) { result ->
+                    if (result is GoogleAuth.Result.SignedIn) vm.onSignedIn(result.idToken)
+                }
+            }
+
             ToolshedTheme(paletteId = palette) {
                 ToolshedAppRoot(
                     state = state,
@@ -184,6 +236,8 @@ class MainActivity : ComponentActivity() {
                     onSendReply = { id, body -> vm.addReply(id, body) },
                     onShareReply = { body -> shareReply(body) },
                     onSaveConnection = vm::saveConnection,
+                    onSignIn = { signIn() },
+                    onSignOut = { vm.signOut() },
                     onDismissMessage = vm::dismissMessage,
                     onLoadUsage = vm::loadUsage,
                     onLoadManifest = vm::loadManifest,

@@ -53,7 +53,16 @@ data class InboxState(
     val loadingUsage: Boolean = false,
     val usageError: String? = null,
     /* The oldest app build the backend still supports. */
-    val minSupportedVersionCode: Int = 0
+    val minSupportedVersionCode: Int = 0,
+    /* Who is signed in, and what the server will accept. Both come from
+       the server (action=state), so the Settings screen can offer Google
+       sign-in only where it actually works. */
+    val signedInEmail: String? = null,
+    val authClientId: String = "",
+    val authGoogle: Boolean = false,
+    val authKey: Boolean = false,
+    val signingIn: Boolean = false,
+    val signInError: String? = null
 ) {
     val visible: List<Idea>
         get() {
@@ -103,6 +112,81 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
         client.endpoint = endpoint
         client.key = key
         refresh()
+    }
+
+    /* ---------- signing in ----------
+
+       The credential lives in AdminClient; this is the part that talks
+       to the screen. Sign-in itself needs a button and an Activity, so
+       MainActivity runs GoogleAuth and hands the result back here. */
+
+    /** True when the app already holds a Google session to send. */
+    fun hasStoredSession(): Boolean = client.usesGoogle
+
+    /** What the server will accept. Safe to call offline: it returns
+        the last answer it had. */
+    fun authConfigNow(): AuthConfig? = runCatching { client.authConfig(force = true) }.getOrNull()
+
+    /** Called on launch. Returns what the server will accept, so the
+        caller can decide whether a silent sign-in is worth trying
+        without asking the server a second time. */
+    suspend fun loadAuth(): AuthConfig? {
+        val cfg = withContext(Dispatchers.IO) { authConfigNow() }
+        _state.value = _state.value.copy(
+            signedInEmail = client.accountEmail.takeIf { it.isNotBlank() },
+            authClientId = cfg?.clientId ?: client.authClientId,
+            authGoogle = cfg?.google ?: client.authClientId.isNotBlank(),
+            authKey = cfg?.key ?: client.key.isNotBlank()
+        )
+        return cfg
+    }
+
+    fun markSigningIn() {
+        _state.value = _state.value.copy(signingIn = true, signInError = null)
+    }
+
+    /** A token from Google. The server is asked who it thinks this is —
+        the token's own claims would need a JWT parser to read, and the
+        server has already checked them. */
+    fun onSignedIn(idToken: String) {
+        client.idToken = idToken
+        viewModelScope.launch {
+            _state.value = _state.value.copy(signingIn = false, signInError = null)
+            try {
+                val info = withContext(Dispatchers.IO) { client.check() }
+                _state.value = _state.value.copy(
+                    signedInEmail = info.optString("email").takeIf { it.isNotBlank() },
+                    authClientId = client.authClientId,
+                    authGoogle = true
+                )
+            } catch (err: Exception) {
+                /* Signed in at Google, refused by the server. That is
+                   almost always the allowlist, and the sentence says so. */
+                _state.value = _state.value.copy(signInError = describe(err))
+            }
+            refresh(showProgress = true)
+        }
+    }
+
+    fun onSignInFailed(message: String) {
+        _state.value = _state.value.copy(signingIn = false, signInError = message)
+    }
+
+    /** Forget the Google session on this device. The server's allowlist
+        is the other half — removing an address there is what actually
+        shuts someone out. */
+    fun signOut() {
+        val app = getApplication<Application>()
+        /* The local half is immediate: the screen must not keep saying
+           "signed in" while Google's own state is being cleared. */
+        client.signOut()
+        _state.value = _state.value.copy(
+            signedInEmail = null,
+            load = if (client.isConfigured()) LoadState.Ready else LoadState.NotConfigured
+        )
+        viewModelScope.launch {
+            runCatching { GoogleAuth.signOut(app) }
+        }
     }
 
     fun setPalette(id: String) {
@@ -462,6 +546,21 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
     private fun describe(err: Exception): String = when {
         err is AdminException && err.message == "forbidden" ->
             "The key was refused. Check it in Settings."
+        /* The Google path, in the server's own words. Each one is a
+           different job for the person holding the phone, which is why
+           v6 stopped answering "forbidden" to all of them. */
+        err is AdminException && err.message == "not allowed" ->
+            "This Google account isn't on the list. Ask whoever runs the sheet to add it to ADMIN_EMAILS."
+        err is AdminException && err.message == "token expired" ->
+            "Your sign-in has expired. Open Settings and sign in again."
+        err is AdminException && err.message == "bad token" ->
+            "Google didn't accept that sign-in. Sign out and back in from Settings."
+        err is AdminException && err.message == "token check failed" ->
+            "Couldn't check your sign-in with Google. Try again in a moment."
+        err is AdminException && err.message == "google sign-in not configured" ->
+            "This server has Google sign-in switched off. The Apps Script needs ANDROID_OAUTH_CLIENT_ID and ADMIN_EMAILS in its properties."
+        err is AdminException && err.message == "no credential" ->
+            "Nothing was sent to sign in with. Open Settings and sign in with Google."
         /* The server answered — with the one sentence an Ideas Engine
            older than v5 says about a POST it doesn't route. Reads moved
            from GET to POST in v5, so an older deployment accepts the
