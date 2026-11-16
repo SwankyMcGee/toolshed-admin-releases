@@ -8,12 +8,15 @@ plugins {
 
 /* Where the signing keystore lives. A Gradle property wins, then an
    environment variable (what CI sets), then the checkout-local
-   default. Keeping it in one place means the release APK is signed the
-   same way on a laptop and in a workflow. */
-fun keystorePath(): String =
-    providers.gradleProperty("toolshedKeystore").orNull
+   default. Returns null when nothing is actually there — an absent
+   keystore leaves the release config unset, which is what lets the
+   test job run on Linux without the secret. */
+fun keystorePath(): String? {
+    val candidate = providers.gradleProperty("toolshedKeystore").orNull
         ?: providers.environmentVariable("TOOLSHED_KEYSTORE").orNull
         ?: "C:/Users/Tanner/Desktop/Toolshed App/toolshed-release.keystore"
+    return if (File(candidate).exists()) candidate else null
+}
 
 fun secret(envName: String, fallback: String): String =
     providers.gradleProperty(envName.lowercase().replace('_', '.')).orNull
@@ -37,11 +40,15 @@ android {
             /* Local builds use the keystore beside the project; CI passes
                the same values in as Gradle properties or environment
                variables, so the signing config has one definition and
-               two sources. */
-            storeFile = file(keystorePath())
-            storePassword = secret("TOOLSHED_KEYSTORE_PASSWORD", "toolshed123")
-            keyAlias = secret("TOOLSHED_KEY_ALIAS", "toolshed")
-            keyPassword = secret("TOOLSHED_KEY_PASSWORD", "toolshed123")
+               two sources. When no keystore can be found the config
+               stays unset — an unsigned release build fails loudly, but
+               the unit tests still run. */
+            keystorePath()?.let { path ->
+                storeFile = file(path)
+                storePassword = secret("TOOLSHED_KEYSTORE_PASSWORD", "toolshed123")
+                keyAlias = secret("TOOLSHED_KEY_ALIAS", "toolshed")
+                keyPassword = secret("TOOLSHED_KEY_PASSWORD", "toolshed123")
+            }
         }
     }
 
