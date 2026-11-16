@@ -14,20 +14,27 @@ import java.net.URLEncoder
    org.json that ships with Android. No Retrofit, no Moshi, no
    coroutines-adapter — one APK, one less thing to break.
 
-   Every call needs the same two settings: the Apps Script /exec URL
-   and the admin key (ideas-engine/ADMIN.md). They live in Prefs.
+    Every call needs the same two settings: the Apps Script /exec URL
+    and the admin key (ideas-engine/ADMIN.md). They live in Prefs.
 
-    API version 1:
-      GET  ?key=…&action=state
-      GET  ?key=…&action=ideas
-      POST  key, action=read    ids=1,2,3
-      POST  key, action=status  id, status, note
+    API version 5 (this build) — every admin call is a POST:
 
-    API version 4 (this build):
-      GET  ?key=…&action=state      -> also api, minSupportedVersionCode
-      GET  ?key=…&action=changes&since=<ms>  -> only rows touched since
-      GET  ?key=…&action=usage&days=30       -> usage already rolled up
-      GET  ?key=…&action=manifest            -> the site's registry
+      POST action=state            -> { ok, admin, api, minSupportedVersionCode }
+      POST action=ideas            -> { ok, ideas }
+      POST action=changes&since=   -> { ok, ideas, serverTime }
+      POST action=replies&id=      -> { ok, replies }
+      POST action=usage&days=      -> { ok, source, tools, resources, pages, … }
+      POST action=manifest         -> { ok, manifest }
+      POST action=pageviews&days=  -> { ok, rows }
+      POST action=read   ids=1,2,3
+      POST action=status id, status, note
+      POST action=reply  id, body
+
+    POST, not GET, for the one reason that matters: a key in a query
+    string ends up in history, in proxy logs, and in the Referer header
+    of anything the URL touches. In the body it travels once, over TLS,
+    and stops there. Version 4 was GET for reads; a v5 backend refuses
+    GET on admin actions and says so.
 
     Every read is cached to disk as it arrives. The app paints from the
     cache first and then refreshes, so it opens instantly and still says
@@ -104,28 +111,15 @@ class AdminClient(private val app: Context) {
 
     /* ---------- requests ---------- */
 
-    private fun get(action: String, params: Map<String, String> = emptyMap()): JSONObject {
-        val query = buildString {
-            append("key=").append(enc(key))
-            append("&action=").append(enc(action))
-            params.forEach { (k, v) -> append("&").append(enc(k)).append("=").append(enc(v)) }
-        }
-        val url = "$endpoint?$query"
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 15_000
-            readTimeout = 20_000
-            setRequestProperty("Accept", "application/json")
-        }
-        return readJson(conn)
-    }
-
-    private fun post(action: String, params: Map<String, String>): JSONObject {
-        val body = buildString {
-            append("key=").append(enc(key))
-            append("&action=").append(enc(action))
-            params.forEach { (k, v) -> append("&").append(enc(k)).append("=").append(enc(v)) }
-        }.toByteArray()
+    /**
+     * Every admin call, reads included. The key goes in the body only.
+     *
+     * A single request style also means the backend needs one door for
+     * admin traffic rather than two that can drift apart — and it means
+     * a key can never reach a query string by accident.
+     */
+    private fun post(action: String, params: Map<String, String> = emptyMap()): JSONObject {
+        val body = formBody(key, action, params).toByteArray()
 
         val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
@@ -208,7 +202,7 @@ class AdminClient(private val app: Context) {
     /** Connection test. Also picks up the backend's API level and the
         oldest app build it still supports. */
     fun check(): JSONObject {
-        val obj = get("state")
+        val obj = post("state")
         apiVersion = obj.optInt("api", apiVersion)
         minSupportedVersionCode = obj.optInt("minSupportedVersionCode", minSupportedVersionCode)
         return obj
@@ -217,7 +211,7 @@ class AdminClient(private val app: Context) {
     /** The site registry, from the backend. Falls back to the bundled
         copy when the backend is old, offline, or the site is down. */
     fun manifest(fallback: SiteManifest): SiteManifest {
-        val obj = runCatching { get("manifest") }.getOrNull() ?: return fallback
+        val obj = runCatching { post("manifest") }.getOrNull() ?: return fallback
         if (!obj.optBoolean("ok")) return fallback
         val json = obj.optJSONObject("manifest")?.toString() ?: return fallback
         val parsed = SiteRegistry.parse(json) ?: return fallback
@@ -226,7 +220,7 @@ class AdminClient(private val app: Context) {
     }
 
     fun ideas(): List<Idea> {
-        val obj = get("ideas")
+        val obj = post("ideas")
         if (!obj.optBoolean("ok")) throw AdminException(obj.optString("error", "unknown error"))
         val arr = obj.optJSONArray("ideas") ?: JSONArray()
         val list = (0 until arr.length()).map { parseIdea(arr.getJSONObject(it)) }
@@ -241,9 +235,9 @@ class AdminClient(private val app: Context) {
      */
     fun changes(since: Long): List<Idea> {
         val obj = if (supportsV4 && since > 0) {
-            get("changes", mapOf("since" to since.toString()))
+            post("changes", mapOf("since" to since.toString()))
         } else {
-            get("ideas")
+            post("ideas")
         }
         if (!obj.optBoolean("ok")) throw AdminException(obj.optString("error", "unknown error"))
         val arr = obj.optJSONArray("ideas") ?: JSONArray()
@@ -287,7 +281,7 @@ class AdminClient(private val app: Context) {
 
     /** All replies on one idea, oldest first. */
     fun replies(ideaId: Int): List<Reply> {
-        val obj = get("replies", mapOf("id" to ideaId.toString()))
+        val obj = post("replies", mapOf("id" to ideaId.toString()))
         if (!obj.optBoolean("ok")) throw AdminException(obj.optString("error", "unknown error"))
         val arr = obj.optJSONArray("replies") ?: JSONArray()
         return (0 until arr.length()).map { parseReply(arr.getJSONObject(it)) }
@@ -308,7 +302,7 @@ class AdminClient(private val app: Context) {
 
     /** Usage rows for the last `days` days: path, day, views, seconds. */
     fun pageviews(days: Int): List<PageView> {
-        val obj = get("pageviews", mapOf("days" to days.toString()))
+        val obj = post("pageviews", mapOf("days" to days.toString()))
         if (!obj.optBoolean("ok")) throw AdminException(obj.optString("error", "unknown error"))
         val arr = obj.optJSONArray("rows") ?: JSONArray()
         return (0 until arr.length()).map { parsePageView(arr.getJSONObject(it)) }
@@ -321,7 +315,7 @@ class AdminClient(private val app: Context) {
      */
     fun usage(days: Int): JSONObject? {
         if (!supportsV4) return null
-        val obj = get("usage", mapOf("days" to days.toString()))
+        val obj = post("usage", mapOf("days" to days.toString()))
         if (!obj.optBoolean("ok")) throw AdminException(obj.optString("error", "unknown error"))
         saveUsage(obj)
         return obj
@@ -400,8 +394,6 @@ class AdminClient(private val app: Context) {
         seconds = o.optInt("seconds")
     )
 
-    private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
-
     companion object {
         const val KEY_ENDPOINT = "endpoint"
         const val KEY_KEY = "key"
@@ -415,6 +407,28 @@ class AdminClient(private val app: Context) {
         private const val CACHE_MANIFEST = "manifest"
         private const val CACHE_USAGE = "usage"
     }
+}
+
+/* ============================================================
+   The body of every admin request.
+
+   It is a top-level function, not a private method, for one reason: the
+   key has to be in here and must never reach a URL, and that is worth a
+   test. A key containing '&' or '=' or '+' is perfectly possible — it's
+   whatever the admin pasted in — and an unescaped one silently becomes
+   two parameters, which reads as "forbidden" with no clue why.
+   ============================================================ */
+
+internal fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
+
+internal fun formBody(
+    key: String,
+    action: String,
+    params: Map<String, String> = emptyMap()
+): String = buildString {
+    append("key=").append(enc(key))
+    append("&action=").append(enc(action))
+    params.forEach { (k, v) -> append("&").append(enc(k)).append("=").append(enc(v)) }
 }
 
 class AdminException(message: String) : Exception(message)

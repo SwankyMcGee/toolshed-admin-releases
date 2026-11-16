@@ -18,10 +18,21 @@ fun keystorePath(): String? {
     return if (File(candidate).exists()) candidate else null
 }
 
-fun secret(envName: String, fallback: String): String =
-    providers.gradleProperty(envName.lowercase().replace('_', '.')).orNull
+/* A Gradle property wins over an environment variable, which is what CI
+   sets from a repository secret. Null when neither is defined.
+
+   There is deliberately no default for any of these. A password written
+   into this file is public the moment the repo is, and this repo is:
+   anyone could read it. Without the keystore file it signs nothing, but
+   it is still half of a two-part secret published for free, and the
+   moment that file ever escapes a laptop or a backup the pair is
+   complete. Android trusts the signing key to decide whether an APK is
+   a legitimate update, so a complete pair means someone could push an
+   update to every teacher's phone. */
+fun secret(envName: String, gradleProperty: String): String? =
+    providers.gradleProperty(gradleProperty).orNull
         ?: providers.environmentVariable(envName).orNull
-        ?: fallback
+        ?.takeIf { it.isNotBlank() }
 
 android {
     namespace = "com.learningtoolshed.admin"
@@ -31,31 +42,46 @@ android {
         applicationId = "com.learningtoolshed.admin"
         minSdk = 24
         targetSdk = 35
-    versionCode = 9
-    versionName = "1.8"
+    versionCode = 10
+    versionName = "1.9"
     }
 
     signingConfigs {
-        create("release") {
-            /* Local builds use the keystore beside the project; CI passes
-               the same values in as Gradle properties or environment
-               variables, so the signing config has one definition and
-               two sources. When no keystore can be found the config
-               stays unset — an unsigned release build fails loudly, but
-               the unit tests still run. */
-            keystorePath()?.let { path ->
-                storeFile = file(path)
-                storePassword = secret("TOOLSHED_KEYSTORE_PASSWORD", "toolshed123")
-                keyAlias = secret("TOOLSHED_KEY_ALIAS", "toolshed")
-                keyPassword = secret("TOOLSHED_KEY_PASSWORD", "toolshed123")
+        /* Local builds use the keystore beside the project; CI passes the
+           same values in as Gradle properties or environment variables, so
+           the signing config has one definition and two sources.
+
+           The config is only created when the keystore *and* all three
+           secrets are present. A missing password must not quietly fall
+           back to something guessable — it must stop the build, because
+           an unsigned APK can't be installed over a signed one anyway. */
+        val keystore = keystorePath()
+        val storePassword = secret("TOOLSHED_KEYSTORE_PASSWORD", "toolshedKeystorePassword")
+        val keyAlias = secret("TOOLSHED_KEY_ALIAS", "toolshedKeyAlias")
+        val keyPassword = secret("TOOLSHED_KEY_PASSWORD", "toolshedKeyPassword")
+
+        if (keystore != null && storePassword != null && keyAlias != null && keyPassword != null) {
+            create("release") {
+                storeFile = file(keystore)
+                this.storePassword = storePassword
+                this.keyAlias = keyAlias
+                this.keyPassword = keyPassword
             }
+        } else if (keystore != null) {
+            logger.warn(
+                "Found the keystore at $keystore but not its passwords. " +
+                    "Set TOOLSHED_KEYSTORE_PASSWORD, TOOLSHED_KEY_ALIAS and " +
+                    "TOOLSHED_KEY_PASSWORD (env), or toolshedKeystorePassword / " +
+                    "toolshedKeyAlias / toolshedKeyPassword in ~/.gradle/gradle.properties. " +
+                    "Release builds will be UNSIGNED until then."
+            )
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -70,6 +70,13 @@ jobs:
       # The keystore is a repository secret, decoded at build time. A
       # fork without it still gets the tests — only the signed APK is
       # skipped, rather than the whole workflow failing.
+      #
+      # The keystore alone is not enough: the passwords are separate
+      # secrets, and the release signing config is only created when all
+      # three are present (build.gradle.kts has no default — a password
+      # written there would be public with the repo). A missing one makes
+      # Gradle warn and produce an unsigned APK, which looks exactly like
+      # a signed one from here, so the next step checks.
       - name: Decode keystore
         id: keystore
         continue-on-error: true
@@ -93,6 +100,20 @@ jobs:
           TOOLSHED_KEY_ALIAS: ${{ secrets.TOOLSHED_KEY_ALIAS }}
           TOOLSHED_KEY_PASSWORD: ${{ secrets.TOOLSHED_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --console=plain
+
+      # The gate that makes "unsigned" loud. Without it a missing
+      # TOOLSHED_KEYSTORE_PASSWORD produces an APK that installs nowhere
+      # useful and still gets uploaded as a release artifact.
+      - name: Verify the APK is signed
+        if: steps.keystore.outputs.have == 'true'
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          SIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          if [ -z "$SIGNER" ]; then
+            echo "::error::apksigner not found under $ANDROID_HOME/build-tools"
+            exit 1
+          fi
+          "$SIGNER" verify --print-certs "$APK"
 
       - name: Upload APK
         if: steps.keystore.outputs.have == 'true'

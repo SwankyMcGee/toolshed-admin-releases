@@ -29,8 +29,8 @@ first sync, or run `gradle wrapper` once.
 2. Paste the Apps Script `/exec` URL — same one as `IDEAS_ENDPOINT` in
    `site.js`.
 3. Paste the **admin key** (see `ideas-engine/ADMIN.md` in the site
-   repo — it's the `ADMIN_KEY` you set in `Code.gs`, not the site's
-   public key).
+   repo — it's the `ADMIN_KEY` Script Property, not the site's public
+   key).
 4. **Save**. The inbox loads on the next refresh.
 
 Both values stay in the app's own storage; nothing is shared with the
@@ -66,11 +66,22 @@ The palettes and the "shape" of the UI (cards, pills, chips) mirror
 `site.css` and `site.js`. If you change a palette on the site, change it
 here too (`Palette.kt`), and the app keeps looking like the same shed.
 
-## Deliberate limits (v1)
+## Deliberate limits
 
-- No offline queue: writes are optimistic in memory, but a failed save
-  is reported rather than retried. If that bites, add WorkManager.
-- No background sync: the app fetches on launch and on pull-to-refresh.
-- The admin API version is `1`; the app checks nothing about it yet. If
-  the sheet grows a column the app ignores it, which is safe.
-- Sideload only; no Play Store listing, no signing key checked in.
+- Writes are optimistic in memory and reported rather than queued; a
+  failed save is not retried. Reads do come from a delta sync and a
+  background worker (v1.7).
+- The admin API is **v5, POST-only** — every call, reads included, puts
+  the key in the body. `GET` with a `key` is refused by the backend on
+  purpose: a key in a query string ends up in history, proxy logs and
+  the Referer header.
+- Sideload only; no Play Store listing, no signing key or password
+  checked in. The release signing config only exists when
+  `TOOLSHED_KEYSTORE_PASSWORD` / `TOOLSHED_KEY_ALIAS` /
+  `TOOLSHED_KEY_PASSWORD` are set (env) or `toolshedKeystorePassword` /
+  `toolshedKeyAlias` / `toolshedKeyPassword` are in
+  `~/.gradle/gradle.properties`. Without them `assembleRelease` warns
+  loudly and produces an unsigned APK.
+- `allowBackup` is off. The admin key lives in SharedPreferences, and a
+  backup would carry it off the device; everything the app shows is a
+  cache of the sheet, so nothing is lost by it.
