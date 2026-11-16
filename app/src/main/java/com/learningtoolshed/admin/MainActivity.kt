@@ -108,6 +108,7 @@ class MainActivity : ComponentActivity() {
                     onSaveConnection = vm::saveConnection,
                     onDismissMessage = vm::dismissMessage,
                     onLoadUsage = vm::loadUsage,
+                    onLoadManifest = vm::loadManifest,
                     /* The update card is part of the layout, above the
                        tabs, so it can't cover them. */
                     banner = update?.let { info ->

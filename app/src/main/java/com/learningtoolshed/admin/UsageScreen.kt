@@ -18,7 +18,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,12 +29,21 @@ import androidx.compose.ui.unit.dp
    The Usage tab.
 
    Answers "what is actually being used": page views and time
-   spent, rolled up per tool and per resource page. The data is
-   the PageViews sheet, grouped by path and day by the backend.
+   spent, rolled up per tool and per resource page.
+
+   The rollup happens on the backend (action=usage) because that's
+   the only version of this that stays fast as the site grows: the
+   app asks for thirty numbers, not thirty thousand rows. When the
+   backend is older than API 4 it falls back to reading raw rows and
+   doing the sums here, which is what v1.6 did.
 
    Sorted by views, biggest first, everywhere. That is the order
    the question is asked in: "what's most used?" The daily chart
    stays chronological, because a trend only reads left-to-right.
+
+   The "not in the registry" section at the bottom is deliberate:
+   those are pages someone visited that the manifest doesn't know
+   about. It's a to-do list, not an error.
    ============================================================ */
 
 @Composable
@@ -44,137 +52,186 @@ fun UsageScreen(
     onRefresh: () -> Unit
 ) {
     val c = MaterialTheme.toolshed
-    val usage = remember(state.pageViews) { UsageStats.of(state.pageViews) }
+    val usage = state.usage
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            start = 14.dp, end = 14.dp, top = 10.dp, bottom = 28.dp
-        ),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Usage",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = c.text
-                    )
-                    Text(
-                        text = "Page views and time spent, from the site's own tracking.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.dim
-                    )
-                }
-                if (state.loadingUsage) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = c.accent
-                    )
-                } else {
-                    HeaderIconButton(label = "Refresh", onClick = onRefresh) { IconRefresh() }
-                }
-            }
-        }
-
-        /* ---------- nothing yet / error ---------- */
-
-        if (state.loadingUsage && state.pageViews.isEmpty()) {
+    WideContainer {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = 14.dp, end = 14.dp, top = 10.dp, bottom = 28.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             item {
-                Card {
-                    Text(
-                        text = "Reading the usage sheet…",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = c.dim
-                    )
-                }
-            }
-        }
-
-        if (!state.loadingUsage && state.pageViews.isEmpty()) {
-            item {
-                Card {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = state.usageError ?: "No visits recorded yet",
+                            text = "Usage",
                             style = MaterialTheme.typography.titleMedium,
                             color = c.text
                         )
                         Text(
-                            text = "Usage appears here once the site's tracking has recorded a visit. Open a page on the site and come back.",
+                            text = "Page views and time spent, from the site's own tracking.",
                             style = MaterialTheme.typography.bodySmall,
                             color = c.dim
                         )
                     }
-                }
-            }
-        }
-
-        if (state.pageViews.isNotEmpty()) {
-            /* ---------- headline numbers ---------- */
-
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    StatCard(
-                        label = "Page views",
-                        value = usage.views.toString(),
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatCard(
-                        label = "Time spent",
-                        value = formatDuration(usage.seconds),
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            /* ---------- daily views ---------- */
-
-            item {
-                Card {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            text = "Views per day",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = c.text
+                    if (state.loadingUsage) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = c.accent
                         )
-                        Text(
-                            text = "Last 30 days" + dateRange(usage),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = c.dim
-                        )
-                        BarChart(
-                            data = usage.perDay,
-                            barColor = c.accent,
-                            labelColor = c.dim
-                        )
+                    } else {
+                        HeaderIconButton(label = "Refresh", onClick = onRefresh) { IconRefresh() }
                     }
                 }
             }
 
-            /* ---------- tools ---------- */
+            /* ---------- nothing yet / error ---------- */
 
-            if (usage.byTool.isNotEmpty()) {
+            if (state.loadingUsage && usage.views == 0) {
                 item {
                     Card {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = "Reading the usage sheet…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = c.dim
+                        )
+                    }
+                }
+            }
+
+            if (!state.loadingUsage && usage.views == 0) {
+                item {
+                    Card {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                text = "By tool",
+                                text = state.usageError ?: "No visits recorded yet",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = c.text
                             )
                             Text(
-                                text = "Every page belonging to each tool, summed.",
+                                text = "Usage appears here once the site's tracking has recorded a visit. Open a page on the site and come back.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = c.dim
                             )
+                        }
+                    }
+                }
+            }
+
+            if (usage.views > 0) {
+                /* ---------- headline numbers ---------- */
+
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        StatCard(
+                            label = "Page views",
+                            value = usage.views.toString(),
+                            modifier = Modifier.weight(1f)
+                        )
+                        StatCard(
+                            label = "Time spent",
+                            value = formatDuration(usage.seconds),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                /* ---------- daily views ---------- */
+
+                item {
+                    Card {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                text = "Views per day",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = c.text
+                            )
+                            Text(
+                                text = "Last 30 days" + dateRange(usage),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = c.dim
+                            )
+                            BarChart(
+                                data = usage.perDay,
+                                barColor = c.accent,
+                                labelColor = c.dim
+                            )
+                        }
+                    }
+                }
+
+                /* ---------- tools ---------- */
+
+                if (usage.byTool.isNotEmpty()) {
+                    item {
+                        Card {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    text = "By tool",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = c.text
+                                )
+                                Text(
+                                    text = "Every page belonging to each tool, summed.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = c.dim
+                                )
+                                UsageBars(
+                                    stats = usage.byTool,
+                                    textColor = c.text,
+                                    trackColor = c.surface2,
+                                    barColor = c.accent
+                                )
+                            }
+                        }
+                    }
+                }
+
+                /* ---------- resources ---------- */
+
+                val withViews = usage.byResource.filter { it.views > 0 }
+                if (withViews.isNotEmpty()) {
+                    item {
+                        Card {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    text = "Resource pages",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = c.text
+                                )
+                                Text(
+                                    text = "Staff guides, most-read first. Average time is per view.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = c.dim
+                                )
+                                ResourceRows(
+                                    stats = withViews,
+                                    textColor = c.text,
+                                    dimColor = c.dim
+                                )
+                            }
+                        }
+                    }
+                }
+
+                /* ---------- top pages ---------- */
+
+                item {
+                    Card {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                text = "Most-used pages",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = c.text
+                            )
                             UsageBars(
-                                stats = usage.byTool,
+                                stats = usage.topPages,
                                 textColor = c.text,
                                 trackColor = c.surface2,
                                 barColor = c.accent
@@ -182,61 +239,53 @@ fun UsageScreen(
                         }
                     }
                 }
-            }
 
-            /* ---------- resources ---------- */
+                /* ---------- pages the registry doesn't know ----------
+                   Deliberately visible: each row is a page to add to
+                   site-manifest.json. Silently dropping these was the
+                   old behaviour, and it hid exactly the pages worth
+                   hearing about. */
 
-            val withViews = usage.byResource.filter { it.views > 0 }
-            if (withViews.isNotEmpty()) {
-                item {
-                    Card {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(
-                                text = "Resource pages",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = c.text
-                            )
-                            Text(
-                                text = "Staff guides, most-read first. Average time is per view.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = c.dim
-                            )
-                            ResourceRows(
-                                stats = withViews,
-                                textColor = c.text,
-                                dimColor = c.dim
-                            )
+                if (usage.unmapped.isNotEmpty()) {
+                    item {
+                        Card(primary = true) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Not in the registry",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = c.text
+                                )
+                                Text(
+                                    text = "These paths were visited but aren't in site-manifest.json, so they can't be grouped under a tool. Add them there and they'll file themselves.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = c.dim
+                                )
+                                UsageBars(
+                                    stats = usage.unmapped,
+                                    textColor = c.text,
+                                    trackColor = c.surface2,
+                                    barColor = c.accent
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            /* ---------- top pages ---------- */
-
-            item {
-                Card {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            text = "Most-used pages",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = c.text
+                            text = "Time is capped at an hour per visit, so a tab left open overnight counts as an hour, not a day.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.dim
                         )
-                        UsageBars(
-                            stats = usage.topPages,
-                            textColor = c.text,
-                            trackColor = c.surface2,
-                            barColor = c.accent
+                        Text(
+                            text = usage.sourceLabel + " · registry updated " +
+                                (state.manifest.updated.ifBlank { "unknown" }),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.dim
                         )
                     }
                 }
-            }
-
-            item {
-                Text(
-                    text = "Time is capped at an hour per visit, so a tab left open overnight counts as an hour, not a day.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.dim
-                )
             }
         }
     }

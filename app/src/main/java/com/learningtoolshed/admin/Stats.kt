@@ -5,35 +5,25 @@ import java.util.Calendar
 /* ============================================================
    Analytics, computed on-device from the ideas already in memory.
 
-   Everything here is pure: give it a list of ideas, get back
-   numbers and series. The Compose screen just draws them.
+   Everything here is pure: give it a list of ideas (and the site
+   registry), get back numbers and series. The Compose screen just
+   draws them.
 
-   v1 answers "what's in the inbox now":
+   Answers "what's in the inbox now":
      - ideas per week (last 12 weeks)
      - tool vs feature split
      - status breakdown
-     - top tools by idea count
-     - unread count
+     - how many ideas each tool has
+     - which ideas name a tool we don't know about
 
-   It cannot answer "how fast do we close things" — that needs
-   status history (see expanding_the_project.md, Option C).
+   It cannot answer "how fast do we close things" — that needs status
+   history (see expanding_the_project.md, Option C).
+
+   The tool list comes from the site registry, not from a constant here.
+   Add a tool to site-manifest.json and it appears in these charts with
+   no app release. Ideas that name a tool the registry doesn't know are
+   counted separately instead of silently vanishing.
    ============================================================ */
-
-/* The tools on the Tools hub (tools.html) and the resource pages
-   per tool (resources.html). Kept in sync with the site by hand —
-   if a tool or page is added on the site, add it here too.
-   SitePages.kt owns the canonical list; these are the idea-side
-   view of the same names. */
-private val IDEA_TOOLS = listOf("Work Cycle Timer", "Math Playground", "The Ideas Engine")
-
-private val IDEA_RESOURCES = listOf(
-    "Work Cycle Timer" to "Quick start",
-    "Work Cycle Timer" to "User guide",
-    "Work Cycle Timer" to "Settings reference",
-    "Work Cycle Timer" to "Troubleshooting",
-    "Work Cycle Timer" to "Scenarios",
-    "Work Cycle Timer" to "Glossary"
-)
 
 data class Bucket(val label: String, val count: Int)
 
@@ -43,19 +33,20 @@ data class Analytics(
     val perWeek: List<Bucket>,        // oldest first, last 12 weeks
     val byType: List<Bucket>,         // Tool / Feature
     val byStatus: List<Bucket>,       // new / reading / planned / done / shelved
-    val topTools: List<Bucket>,       // by feature ideas, biggest first
-    val byTool: List<Bucket>,         // all ideas per tool (Tool + Feature)
-    val byResource: List<Bucket>      // feature ideas per resource page
+    val byTool: List<Bucket>,         // every known tool, biggest first
+    val topTools: List<Bucket>,       // the six busiest, by feature ideas
+    val unmapped: List<Bucket>        // ideas naming a tool we don't know
 ) {
     val maxWeek: Int get() = perWeek.maxOfOrNull { it.count } ?: 1
-    val maxTool: Int get() = topTools.maxOfOrNull { it.count } ?: 1
     val maxType: Int get() = byType.maxOfOrNull { it.count } ?: 1
     val maxStatus: Int get() = byStatus.maxOfOrNull { it.count } ?: 1
+    val maxTool: Int get() = byTool.maxOfOrNull { it.count } ?: 1
+    val hasUnmapped: Boolean get() = unmapped.isNotEmpty()
 }
 
 object Stats {
 
-    fun of(ideas: List<Idea>): Analytics {
+    fun of(ideas: List<Idea>, manifest: SiteManifest): Analytics {
         val total = ideas.size
         val unread = ideas.count { !it.read }
 
@@ -68,6 +59,18 @@ object Stats {
             Bucket(status.replaceFirstChar { it.uppercase() }, ideas.count { it.status == status })
         }
 
+        /* Every tool in the registry gets a row, even at zero: an empty
+           row says "nothing has been asked for here yet", which is a
+           different fact from the tool not existing. */
+        val byTool = manifest.tools
+            .map { tool ->
+                Bucket(
+                    tool.name,
+                    ideas.count { idea -> mentionsTool(idea, tool.name) }
+                )
+            }
+            .sortedByDescending { it.count }
+
         val topTools = ideas
             .filter { it.isFeature && it.tool.isNotBlank() }
             .groupingBy { it.tool }
@@ -77,31 +80,24 @@ object Stats {
             .take(6)
             .map { Bucket(it.key, it.value) }
 
-        /* All ideas per tool — the Tools hub page's cards, ranked by
-           how many ideas mention them (feature ideas name the tool;
-           tool ideas are the tool themselves). */
-        val byTool = (IDEA_TOOLS + ideas.mapNotNull { if (it.isFeature) it.tool else null })
-            .distinct()
-            .map { tool ->
-                val count = ideas.count { idea ->
-                    if (idea.isFeature) idea.tool.equals(tool, true)
-                    else idea.type.equals("Tool", true) && idea.idea.contains(tool, ignoreCase = true)
+        /* An idea names a tool the site doesn't have — either a feature
+           idea whose "Which tool" isn't in the registry, or a tool idea
+           whose text mentions a tool that isn't. Both are the same
+           signal: the site or the manifest is out of date. */
+        val known = manifest.toolNames.map { it.lowercase() }.toSet()
+        val unmapped = ideas
+            .filter { idea ->
+                when {
+                    idea.isFeature -> idea.tool.isNotBlank() &&
+                        idea.tool.lowercase() !in known
+                    else -> false
                 }
-                Bucket(tool, count)
             }
-            .filter { it.count > 0 }
-            .sortedByDescending { it.count }
-
-        /* Feature ideas per resource page. The sheet's "Which tool"
-           is the tool, not the page — but the resource pages are
-           per-tool, so a feature idea for a tool counts as a feature
-           idea for that tool's resources. This is a proxy: "which
-           tool's resources need work" is the closest the sheet can
-           answer. */
-        val byResource = IDEA_RESOURCES.map { (tool, page) ->
-            val count = ideas.count { it.isFeature && it.tool.equals(tool, true) }
-            Bucket(page, count)
-        }.filter { it.count > 0 }.sortedByDescending { it.count }
+            .groupingBy { it.tool.ifBlank { "(no tool named)" } }
+            .eachCount()
+            .entries
+            .sortedByDescending { it.value }
+            .map { Bucket(it.key, it.value) }
 
         return Analytics(
             total = total,
@@ -109,11 +105,21 @@ object Stats {
             perWeek = perWeek(ideas, 12),
             byType = byType,
             byStatus = byStatus,
-            topTools = topTools,
             byTool = byTool,
-            byResource = byResource
+            topTools = topTools,
+            unmapped = unmapped
         )
     }
+
+    /**
+     * Does this idea belong to `tool`?
+     * A feature idea names its tool in the "Which tool" column. A tool
+     * idea is the tool itself, so it counts when its text mentions it —
+     * the same rule v1.6 used, kept so the numbers don't move.
+     */
+    private fun mentionsTool(idea: Idea, tool: String): Boolean =
+        if (idea.isFeature) idea.tool.equals(tool, true)
+        else idea.type.equals("Tool", true) && idea.idea.contains(tool, ignoreCase = true)
 
     /** Count ideas whose `When` falls in each of the last `weeks`
         weeks, oldest first. Labels are short ("3 Nov") so the axis
@@ -139,33 +145,19 @@ object Stats {
         }
 
         val counts = IntArray(weeks)
-        val fmt = java.text.SimpleDateFormat("d MMM", java.util.Locale.UK)
-        val labels = Array(weeks) { fmt.format(java.util.Date(starts[it])) }
-
         ideas.forEach { idea ->
-            val t = parseWhen(idea.whenIso) ?: return@forEach
-            /* Find which bucket it falls in: the last start <= t. */
-            for (i in starts.indices.reversed()) {
-                if (t >= starts[i]) {
-                    counts[i]++
-                    break
-                }
+            val t = Clock.parse(idea.whenIso) ?: return@forEach
+            /* The newest bucket also catches anything after this week. */
+            var index = weeks - 1
+            for (i in starts.indices) {
+                if (t.time < starts[i]) { index = i - 1; break }
             }
+            if (index in 0 until weeks) counts[index]++
         }
 
-        return (0 until weeks).map { Bucket(labels[it], counts[it]) }
-    }
-
-    private fun parseWhen(iso: String): Long? {
-        if (iso.isBlank()) return null
-        return try {
-            val cleaned = iso.replace("Z", "").let {
-                if (it.contains('.')) it.substringBefore('.') else it
-            }
-            java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
-                .parse(cleaned)?.time
-        } catch (err: Exception) {
-            null
+        val fmt = java.text.SimpleDateFormat("d MMM", java.util.Locale.UK)
+        return starts.mapIndexed { i, start ->
+            Bucket(fmt.format(java.util.Date(start)), counts[i])
         }
     }
 }

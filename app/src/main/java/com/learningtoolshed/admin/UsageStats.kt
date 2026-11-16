@@ -1,28 +1,36 @@
 package com.learningtoolshed.admin
 
+import org.json.JSONObject
 import java.util.Calendar
 
 /* ============================================================
-   Usage statistics, computed on-device from the PageViews
-   rows the backend returns.
+   Usage statistics.
 
-   The backend gives per-path, per-day totals over the last 90
-   days. This rolls them up the way the admin reads them:
+   Two ways in, one shape out:
 
-     - per tool (summing every page that belongs to that tool)
-     - per resource page
-     - top pages overall
-     - a daily views series for the last 30 days
+     fromPayload() — the backend has already rolled the rows up per
+       tool and per page (action=usage). Small, fast, and the only
+       approach that survives a busy site.
 
-   Times are shown as minutes when they're long enough to be
-   readable ("4m 12s") and seconds when they're not ("38s").
+     of() — the app rolls up raw PageViews rows itself, using the site
+       registry. Used when the backend is older than API 4, and by the
+       tests, because it's pure.
+
+   Either way the shape is Usage, and the screen doesn't care which
+   produced it — except for `source`, which it shows, because "live" and
+   "rollup" are different claims about freshness.
+
+   A path the registry doesn't know shows up in `unmapped` rather than
+   vanishing. That list is the to-do: each row is a page waiting for an
+   entry in site-manifest.json.
    ============================================================ */
 
-/** One tool's (or resource page's) usage totals. */
+/** One tool's (or one resource page's, or one unknown path's) totals. */
 data class UsageStat(
     val label: String,
     val views: Int,
     val seconds: Int,
+    val key: String = "",
     val isTool: Boolean = false
 ) {
     val averageSeconds: Int get() = if (views == 0) 0 else seconds / views
@@ -31,70 +39,166 @@ data class UsageStat(
 data class Usage(
     val views: Int,
     val seconds: Int,
-    val perDay: List<Bucket>,          // oldest first, last 30 days
+    val perDay: List<Bucket>,          // oldest first
     val byTool: List<UsageStat>,       // biggest first, tools only
     val byResource: List<UsageStat>,   // biggest first, resource pages
     val topPages: List<UsageStat>,     // biggest first, every page
-    val firstDay: String,              // earliest day with any views
-    val lastDay: String                // latest day with any views
+    val unmapped: List<UsageStat>,     // paths the registry doesn't know
+    val firstDay: String,
+    val lastDay: String,
+    val source: String                 // "rollup" | "live" | "local"
 ) {
     val maxDay: Int get() = perDay.maxOfOrNull { it.count } ?: 1
+    val hasUnmapped: Boolean get() = unmapped.isNotEmpty()
+
+    val sourceLabel: String
+        get() = when (source) {
+            "rollup" -> "Nightly totals"
+            "live" -> "Live from the sheet"
+            else -> "Computed on this device"
+        }
 }
 
 object UsageStats {
 
-    fun of(rows: List<PageView>): Usage {
-        if (rows.isEmpty()) {
-            return Usage(
-                views = 0, seconds = 0,
-                perDay = emptyList(),
-                byTool = emptyList(),
-                byResource = emptyList(),
-                topPages = emptyList(),
-                firstDay = "", lastDay = ""
+    fun empty(): Usage = Usage(
+        views = 0, seconds = 0,
+        perDay = emptyList(),
+        byTool = emptyList(),
+        byResource = emptyList(),
+        topPages = emptyList(),
+        unmapped = emptyList(),
+        firstDay = "", lastDay = "", source = "local"
+    )
+
+    /* ---------- from the backend (action=usage) ---------- */
+
+    fun fromPayload(root: JSONObject, manifest: SiteManifest): Usage {
+        val tools = root.optJSONArray("tools").objects().map { o ->
+            val id = o.optString("id")
+            UsageStat(
+                label = o.optString("name").ifBlank { manifest.toolName(id).ifBlank { id } },
+                views = o.optInt("views"),
+                seconds = o.optInt("seconds"),
+                key = id,
+                isTool = true
             )
+        }.sortedByDescending { it.views }
+
+        /* The payload carries its own titles. The registry is the
+           fallback for a backend that sent a path but no title — and
+           it's what keeps a renamed page reading the same in both
+           places. */
+        val resources = root.optJSONArray("resources").objects().map { o ->
+            val path = o.optString("path")
+            UsageStat(
+                label = o.optString("title").ifBlank {
+                    manifest.titleForPath(path).ifBlank { path }
+                },
+                views = o.optInt("views"),
+                seconds = o.optInt("seconds"),
+                key = path
+            )
+        }.sortedByDescending { it.views }
+
+        val pages = root.optJSONArray("pages").objects().map { o ->
+            UsageStat(
+                label = o.optString("title").ifBlank { o.optString("path") },
+                views = o.optInt("views"),
+                seconds = o.optInt("seconds"),
+                key = o.optString("path")
+            )
+        }.sortedByDescending { it.views }
+
+        val unmapped = root.optJSONArray("unmapped").objects().map { o ->
+            UsageStat(
+                label = o.optString("path"),
+                views = o.optInt("views"),
+                seconds = o.optInt("seconds"),
+                key = o.optString("path")
+            )
+        }.sortedByDescending { it.views }
+
+        /* The backend sends a day label per bucket; turn it into the
+           short axis label the chart draws. */
+        val perDay = root.optJSONArray("perDay").objects().map { o ->
+            Bucket(shortDay(o.optString("day")), o.optInt("views"))
         }
 
-        /* Total across every row. */
+        return Usage(
+            views = root.optInt("totalViews"),
+            seconds = root.optInt("totalSeconds"),
+            perDay = perDay,
+            byTool = tools,
+            byResource = resources,
+            topPages = pages.take(20),
+            unmapped = unmapped,
+            firstDay = root.optString("firstDay"),
+            lastDay = root.optString("lastDay"),
+            source = root.optString("source").ifBlank { "rollup" }
+        )
+    }
+
+    /* ---------- from raw rows (older backend, tests) ---------- */
+
+    fun of(rows: List<PageView>, manifest: SiteManifest): Usage {
+        if (rows.isEmpty()) return empty()
+
         val views = rows.sumOf { it.views }
         val seconds = rows.sumOf { it.seconds }
 
         /* Per canonical page, summed over every day. */
-        val byPage = rows.groupBy { canonicalPath(it.path) }
+        val byPath = rows.groupBy { SiteRegistry.canonicalPath(it.path) }
             .map { (path, group) ->
-                UsageStat(
-                    label = titleForPath(path),
-                    views = group.sumOf { it.views },
-                    seconds = group.sumOf { it.seconds }
+                Triple(
+                    path,
+                    group.sumOf { it.views },
+                    group.sumOf { it.seconds }
                 )
             }
 
-        /* Tools: every page tagged with that tool. */
-        val byTool = TOOL_NAMES.map { tool ->
-            val group = byPageForTool(rows, tool)
+        /* Tools: every page the registry tags with that tool. */
+        val byTool = manifest.tools.map { tool ->
+            val mine = byPath.filter { manifest.toolForPath(it.first) == tool.id }
             UsageStat(
-                label = tool,
-                views = group.first,
-                seconds = group.second,
+                label = tool.name,
+                views = mine.sumOf { it.second },
+                seconds = mine.sumOf { it.third },
+                key = tool.id,
                 isTool = true
             )
         }.filter { it.views > 0 }.sortedByDescending { it.views }
 
-        /* Resource pages: one row each, so a rarely-opened guide
-           still shows a zero and doesn't silently vanish. */
-        val byResource = RESOURCE_PAGES.map { page ->
-            val group = byPage.firstOrNull { it.label == page.title }
+        /* Resource pages: one row each, so a rarely-opened guide still
+           shows a zero and doesn't silently vanish. */
+        val byResource = manifest.resourcePages.map { page ->
+            val hit = byPath.firstOrNull { it.first == SiteRegistry.canonicalPath(page.path) }
             UsageStat(
                 label = page.title,
-                views = group?.views ?: 0,
-                seconds = group?.seconds ?: 0
+                views = hit?.second ?: 0,
+                seconds = hit?.third ?: 0,
+                key = page.path
             )
         }.sortedByDescending { it.views }
 
-        /* Top pages overall — the "what's actually being used" list. */
-        val topPages = byPage.sortedByDescending { it.views }.take(12)
+        /* Every page, most-used first. */
+        val allPages = byPath.map { (path, v, s) ->
+            UsageStat(
+                label = manifest.titleForPath(path),
+                views = v,
+                seconds = s,
+                key = path
+            )
+        }.sortedByDescending { it.views }
 
-        /* Daily series for the last 30 days. */
+        /* Paths the registry doesn't know — the to-do list. */
+        val unmapped = byPath
+            .filter { (path, _, _) -> !manifest.isKnownPath(path) && path != "/" }
+            .map { (path, v, s) ->
+                UsageStat(label = path, views = v, seconds = s, key = path)
+            }
+            .sortedByDescending { it.views }
+
         val perDay = perDay(rows, 30)
 
         val days = rows.map { it.day }.filter { it.isNotBlank() }.sorted()
@@ -104,23 +208,12 @@ object UsageStats {
             perDay = perDay,
             byTool = byTool,
             byResource = byResource,
-            topPages = topPages,
+            topPages = allPages.take(12),
+            unmapped = unmapped,
             firstDay = days.firstOrNull() ?: "",
-            lastDay = days.lastOrNull() ?: ""
+            lastDay = days.lastOrNull() ?: "",
+            source = "local"
         )
-    }
-
-    /** Views + seconds for every page belonging to `tool`. */
-    private fun byPageForTool(rows: List<PageView>, tool: String): Pair<Int, Int> {
-        var v = 0
-        var s = 0
-        rows.forEach { row ->
-            if (toolForPath(canonicalPath(row.path)) == tool) {
-                v += row.views
-                s += row.seconds
-            }
-        }
-        return v to s
     }
 
     /** Sum views per day for the last `days` days, oldest first.
@@ -146,6 +239,22 @@ object UsageStats {
             val k = key.format(c.time)
             Bucket(fmt.format(c.time), byDay[k] ?: 0)
         }
+    }
+
+    private fun shortDay(iso: String): String {
+        if (iso.isBlank()) return ""
+        return runCatching {
+            val d = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).parse(iso)
+                ?: return iso
+            java.text.SimpleDateFormat("d MMM", java.util.Locale.UK).format(d)
+        }.getOrDefault(iso)
+    }
+
+    private fun org.json.JSONArray?.objects(): List<JSONObject> {
+        val out = ArrayList<JSONObject>()
+        if (this == null) return out
+        for (i in 0 until length()) out.add(getJSONObject(i))
+        return out
     }
 }
 

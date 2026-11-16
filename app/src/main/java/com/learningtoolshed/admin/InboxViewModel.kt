@@ -44,12 +44,16 @@ data class InboxState(
        no idea is open, or when the open idea has no replies. */
     val replies: List<Reply> = emptyList(),
     val loadingReplies: Boolean = false,
-    /* Usage rows from the PageViews sheet, newest last. Empty until
-       the first load; loading is tracked separately so the Usage
-       tab can show a spinner without disturbing the inbox. */
-    val pageViews: List<PageView> = emptyList(),
+    /* The site registry — which tools exist, which page is which.
+       Arrives from the backend, falls back to the copy in the APK. */
+    val manifest: SiteManifest = SiteManifest.empty(),
+    /* Usage, already rolled up (or computed here when the backend is
+       older than API 4). */
+    val usage: Usage = UsageStats.empty(),
     val loadingUsage: Boolean = false,
-    val usageError: String? = null
+    val usageError: String? = null,
+    /* The oldest app build the backend still supports. */
+    val minSupportedVersionCode: Int = 0
 ) {
     val visible: List<Idea>
         get() {
@@ -68,6 +72,17 @@ data class InboxState(
         }
 
     val unreadCount: Int get() = ideas.count { !it.read }
+
+    /** True when this build is older than the backend asks for. */
+    val tooOld: Boolean
+        get() = minSupportedVersionCode > 0 &&
+            BuildConfig.VERSION_CODE < minSupportedVersionCode
+
+    /* Feature flags, straight from the manifest. A screen the backend
+       has switched off simply isn't offered. */
+    val showUsage: Boolean get() = manifest.flag("usage")
+    val showAnalytics: Boolean get() = manifest.flag("analytics")
+    val showReplies: Boolean get() = manifest.flag("replies")
 }
 
 class InboxViewModel(app: Application) : AndroidViewModel(app) {
@@ -137,12 +152,22 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
             )
             try {
                 val (ideas, newOnes) = withContext(Dispatchers.IO) {
-                    val list = client.ideas()
+                    /* The cache is the screen's starting point: whatever
+                       the last sync left behind, so the app opens with
+                       content instead of a spinner. */
+                    val cached = client.cachedIdeas()
+                    val baseline = client.lastSyncAt > 0L && cached.isNotEmpty()
+
+                    /* One read: the rows touched since the last sync,
+                       merged onto the cache. On an API 4 backend that's
+                       a few rows; on an older one it's everything, which
+                       is what v1.6 did anyway. */
+                    val list = client.syncChanges()
+
                     /* Only notify for rows that appeared since the last
                        successful sync — not on the very first load, when
                        "new to me" just means "I haven't opened it yet". */
-                    val knownIds = before.ideas.mapTo(HashSet()) { it.id }
-                    val baseline = client.lastSyncAt > 0L && before.ideas.isNotEmpty()
+                    val knownIds = cached.mapTo(HashSet()) { it.id }
                     val fresh = if (baseline) {
                         list.filter { !it.read && !knownIds.contains(it.id) }
                     } else {
@@ -150,17 +175,66 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     list to fresh
                 }
+
                 client.lastSyncAt = System.currentTimeMillis()
                 _state.value = _state.value.copy(
                     ideas = ideas,
                     load = LoadState.Ready,
-                    lastSyncAt = client.lastSyncAt
+                    lastSyncAt = client.lastSyncAt,
+                    message = null
                 )
                 if (newOnes.isNotEmpty()) notifyNew(newOnes)
             } catch (err: Exception) {
+                /* A failed sync is not an empty inbox: keep what's on
+                   screen (or in the cache) and say what happened. */
                 _state.value = _state.value.copy(
-                    load = if (_state.value.ideas.isEmpty()) LoadState.Failed else LoadState.Ready,
+                    ideas = if (_state.value.ideas.isEmpty()) client.cachedIdeas()
+                    else _state.value.ideas,
+                    load = if (_state.value.ideas.isEmpty() && client.cachedIdeas().isEmpty()) {
+                        LoadState.Failed
+                    } else {
+                        LoadState.Ready
+                    },
                     message = describe(err)
+                )
+            }
+        }
+    }
+
+    /**
+     * The site registry: which tools exist, which page belongs to which.
+     * Loads the copy bundled in the APK first (so the very first screen
+     * is already right), then asks the backend and remembers the answer.
+     */
+    fun loadManifest() {
+        val app = getApplication<Application>()
+        val bundled = runCatching { SiteRegistry.bundled(app) }
+            .getOrDefault(SiteManifest.empty())
+
+        val cached = client.cachedManifest()
+        _state.value = _state.value.copy(
+            manifest = cached ?: bundled,
+            minSupportedVersionCode = client.minSupportedVersionCode
+        )
+        if (!client.isConfigured()) return
+
+        viewModelScope.launch {
+            try {
+                /* Ask the backend what it knows about itself first: the
+                   API level decides whether usage can be rolled up, and
+                   the minimum decides whether this build is too old. */
+                withContext(Dispatchers.IO) { client.check() }
+                val fresh = withContext(Dispatchers.IO) { client.manifest(bundled) }
+                _state.value = _state.value.copy(
+                    manifest = fresh,
+                    minSupportedVersionCode = client.minSupportedVersionCode
+                )
+            } catch (err: Exception) {
+                /* Offline, or an old backend. The bundled copy is a
+                   complete registry, so the app carries on. */
+                _state.value = _state.value.copy(
+                    manifest = _state.value.manifest,
+                    minSupportedVersionCode = client.minSupportedVersionCode
                 )
             }
         }
@@ -287,8 +361,17 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
 
     /* ---------- usage ---------- */
 
-    /** Load the usage rows for the Usage tab. Called on first open
-        and on pull-to-refresh; the rows are small so it is cheap. */
+    /**
+     * Load usage for the Usage tab.
+     *
+     * Preferred: action=usage, already rolled up per tool and page by
+     * the backend — a small answer that stays small as the site grows.
+     * Fallback: action=pageviews plus on-device aggregation, for a
+     * backend older than API 4.
+     *
+     * Both paths write through the cache, so the tab has something to
+     * draw even when the read fails.
+     */
     fun loadUsage() {
         if (!client.isConfigured()) {
             _state.value = _state.value.copy(usageError = "Not connected yet.")
@@ -296,15 +379,28 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             _state.value = _state.value.copy(loadingUsage = true, usageError = null)
+            val manifest = _state.value.manifest
             try {
-                val rows = withContext(Dispatchers.IO) { client.pageviews() }
+                val usage = withContext(Dispatchers.IO) {
+                    /* Prefer the backend's rollup. Anything other than
+                       a usable answer — an older backend, no manifest on
+                       the server, a slow network — falls through to
+                       reading raw rows and summing them here. */
+                    val payload = runCatching { client.usage(USAGE_DAYS) }.getOrNull()
+                    payload
+                        ?.let { UsageStats.fromPayload(it, manifest) }
+                        ?: UsageStats.of(client.pageviews(USAGE_DAYS), manifest)
+                }
                 _state.value = _state.value.copy(
-                    pageViews = rows,
+                    usage = usage,
                     loadingUsage = false,
-                    usageError = if (rows.isEmpty()) "No visits recorded yet." else null
+                    usageError = if (usage.views == 0) "No visits recorded yet." else null
                 )
             } catch (err: Exception) {
+                /* Keep the cached rollup on screen if there is one. */
+                val cached = client.cachedUsage()?.let { UsageStats.fromPayload(it, manifest) }
                 _state.value = _state.value.copy(
+                    usage = cached ?: _state.value.usage,
                     loadingUsage = false,
                     usageError = describe(err)
                 )
@@ -370,5 +466,9 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         private const val NOTIFICATION_ID = 4201
+
+        /* How much usage to ask for. 90 days is the sheet's retention
+           window, so anything longer would just be empty. */
+        const val USAGE_DAYS = 90
     }
 }

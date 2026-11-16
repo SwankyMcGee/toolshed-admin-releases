@@ -17,12 +17,22 @@ import java.net.URLEncoder
    Every call needs the same two settings: the Apps Script /exec URL
    and the admin key (ideas-engine/ADMIN.md). They live in Prefs.
 
-   API version 1:
-     GET  ?key=…&action=state
-     GET  ?key=…&action=ideas
-     POST  key, action=read    ids=1,2,3
-     POST  key, action=status  id, status, note
-   ============================================================ */
+    API version 1:
+      GET  ?key=…&action=state
+      GET  ?key=…&action=ideas
+      POST  key, action=read    ids=1,2,3
+      POST  key, action=status  id, status, note
+
+    API version 4 (this build):
+      GET  ?key=…&action=state      -> also api, minSupportedVersionCode
+      GET  ?key=…&action=changes&since=<ms>  -> only rows touched since
+      GET  ?key=…&action=usage&days=30       -> usage already rolled up
+      GET  ?key=…&action=manifest            -> the site's registry
+
+    Every read is cached to disk as it arrives. The app paints from the
+    cache first and then refreshes, so it opens instantly and still says
+    something useful on a train.
+    ============================================================ */
 
 const val DEFAULT_ENDPOINT =
     "https://script.google.com/macros/s/AKfycbzZG7bLh8EQTsnZN8pfkHiry_gQMT2PFggl7M4Ku1RAUjDgpHDGczpla_dsEXhmIA4jDw/exec"
@@ -66,6 +76,29 @@ class AdminClient(private val app: Context) {
     var lastSyncAt: Long
         get() = prefs.getLong(KEY_LAST_SYNC, 0L)
         set(value) = prefs.edit().putLong(KEY_LAST_SYNC, value).apply()
+
+    /* The backend's clock at the last sync. Rows touched after this are
+       what action=changes returns, so it's the high-water mark for the
+       delta read — not the local clock, which a phone can have wrong. */
+    var lastServerTime: Long
+        get() = prefs.getLong(KEY_SERVER_TIME, 0L)
+        set(value) = prefs.edit().putLong(KEY_SERVER_TIME, value).apply()
+
+    /* What the backend says about itself, from action=state. */
+    var apiVersion: Int
+        get() = prefs.getInt(KEY_API, 0)
+        set(value) = prefs.edit().putInt(KEY_API, value).apply()
+
+    var minSupportedVersionCode: Int
+        get() = prefs.getInt(KEY_MIN_SUPPORTED, 0)
+        set(value) = prefs.edit().putInt(KEY_MIN_SUPPORTED, value).apply()
+
+    /** True when the backend is too old for the delta/usage actions. */
+    val supportsV4: Boolean get() = apiVersion >= 4
+
+    /** True when this build is older than the backend will support. */
+    fun isTooOld(): Boolean =
+        minSupportedVersionCode > 0 && BuildConfig.VERSION_CODE < minSupportedVersionCode
 
     fun isConfigured(): Boolean = endpoint.isNotBlank() && key.isNotBlank()
 
@@ -120,16 +153,118 @@ class AdminClient(private val app: Context) {
         }
     }
 
-    /* ---------- the four actions ---------- */
+    /* ---------- on-disk cache ----------
+       Three small files in filesDir. Anything a read returns is written
+       here before it reaches the screen; if the next read fails, the
+       app still has a screen to show. */
 
-    /** Connection test: refuses politely when the key is wrong. */
-    fun check(): JSONObject = get("state")
+    private fun cacheFile(name: String) = java.io.File(app.filesDir, "cache_$name.json")
+
+    private fun readCache(name: String): String? =
+        runCatching { cacheFile(name).takeIf { it.exists() }?.readText() }.getOrNull()
+
+    private fun writeCache(name: String, text: String) {
+        runCatching { cacheFile(name).writeText(text) }
+    }
+
+    fun cachedIdeas(): List<Idea> {
+        val text = readCache(CACHE_IDEAS) ?: return emptyList()
+        return runCatching {
+            val arr = JSONObject(text).optJSONArray("ideas") ?: JSONArray()
+            (0 until arr.length()).map { parseIdea(arr.getJSONObject(it)) }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun saveIdeas(list: List<Idea>) {
+        val root = JSONObject().put("ideas", JSONArray().apply {
+            list.forEach { put(encodeIdea(it)) }
+        })
+        writeCache(CACHE_IDEAS, root.toString())
+    }
+
+    /** Write a merged list back, so the next launch has it. */
+    fun cacheIdeas(list: List<Idea>) = saveIdeas(list)
+
+    fun cachedManifest(): SiteManifest? {
+        val text = readCache(CACHE_MANIFEST) ?: return null
+        return SiteRegistry.parse(text)
+    }
+
+    private fun saveManifest(manifest: SiteManifest) {
+        writeCache(CACHE_MANIFEST, encodeManifest(manifest))
+    }
+
+    fun cachedUsage(): JSONObject? {
+        val text = readCache(CACHE_USAGE) ?: return null
+        return runCatching { JSONObject(text) }.getOrNull()
+    }
+
+    private fun saveUsage(payload: JSONObject) {
+        writeCache(CACHE_USAGE, payload.toString())
+    }
+
+    /* ---------- the actions ---------- */
+
+    /** Connection test. Also picks up the backend's API level and the
+        oldest app build it still supports. */
+    fun check(): JSONObject {
+        val obj = get("state")
+        apiVersion = obj.optInt("api", apiVersion)
+        minSupportedVersionCode = obj.optInt("minSupportedVersionCode", minSupportedVersionCode)
+        return obj
+    }
+
+    /** The site registry, from the backend. Falls back to the bundled
+        copy when the backend is old, offline, or the site is down. */
+    fun manifest(fallback: SiteManifest): SiteManifest {
+        val obj = runCatching { get("manifest") }.getOrNull() ?: return fallback
+        if (!obj.optBoolean("ok")) return fallback
+        val json = obj.optJSONObject("manifest")?.toString() ?: return fallback
+        val parsed = SiteRegistry.parse(json) ?: return fallback
+        saveManifest(parsed)
+        return parsed
+    }
 
     fun ideas(): List<Idea> {
         val obj = get("ideas")
         if (!obj.optBoolean("ok")) throw AdminException(obj.optString("error", "unknown error"))
         val arr = obj.optJSONArray("ideas") ?: JSONArray()
-        return (0 until arr.length()).map { parseIdea(arr.getJSONObject(it)) }
+        val list = (0 until arr.length()).map { parseIdea(arr.getJSONObject(it)) }
+        saveIdeas(list)
+        return list
+    }
+
+    /**
+     * Rows touched since `since` (backend clock, ms). On API 4+ this is
+     * the cheap path; on an older backend it reads everything, which is
+     * what v1.6 did anyway.
+     */
+    fun changes(since: Long): List<Idea> {
+        val obj = if (supportsV4 && since > 0) {
+            get("changes", mapOf("since" to since.toString()))
+        } else {
+            get("ideas")
+        }
+        if (!obj.optBoolean("ok")) throw AdminException(obj.optString("error", "unknown error"))
+        val arr = obj.optJSONArray("ideas") ?: JSONArray()
+        val list = (0 until arr.length()).map { parseIdea(arr.getJSONObject(it)) }
+        /* The server's clock is the high-water mark for the next call. */
+        obj.optLong("serverTime", 0L).takeIf { it > 0 }?.let { lastServerTime = it }
+        return list
+    }
+
+    /** The full list, for when the delta read can't be trusted. */
+    fun ideasFull(): List<Idea> {
+        lastServerTime = 0
+        return ideas()
+    }
+
+    /** The changed rows plus what we already had, newest first. Shared
+        by the ViewModel and the background worker so both stay in step. */
+    fun syncChanges(): List<Idea> {
+        val merged = IdeaMerger.merge(cachedIdeas(), changes(lastServerTime))
+        cacheIdeas(merged)
+        return merged
     }
 
     fun markRead(ids: List<Int>): Int {
@@ -171,12 +306,25 @@ class AdminClient(private val app: Context) {
             )
     }
 
-    /** Usage rows for the last 90 days: path, day, views, seconds. */
-    fun pageviews(): List<PageView> {
-        val obj = get("pageviews")
+    /** Usage rows for the last `days` days: path, day, views, seconds. */
+    fun pageviews(days: Int): List<PageView> {
+        val obj = get("pageviews", mapOf("days" to days.toString()))
         if (!obj.optBoolean("ok")) throw AdminException(obj.optString("error", "unknown error"))
         val arr = obj.optJSONArray("rows") ?: JSONArray()
         return (0 until arr.length()).map { parsePageView(arr.getJSONObject(it)) }
+    }
+
+    /**
+     * Usage, already rolled up per tool and page by the backend.
+     * Returns null on an older backend (API < 4) so the caller can fall
+     * back to pageviews() and aggregate on-device.
+     */
+    fun usage(days: Int): JSONObject? {
+        if (!supportsV4) return null
+        val obj = get("usage", mapOf("days" to days.toString()))
+        if (!obj.optBoolean("ok")) throw AdminException(obj.optString("error", "unknown error"))
+        saveUsage(obj)
+        return obj
     }
 
     private fun parseIdea(o: JSONObject) = Idea(
@@ -190,6 +338,52 @@ class AdminClient(private val app: Context) {
         status = o.optString("status").ifBlank { "new" },
         note = o.optString("note")
     )
+
+    private fun encodeIdea(i: Idea) = JSONObject().apply {
+        put("id", i.id)
+        put("type", i.type)
+        put("when", i.whenIso)
+        put("idea", i.idea)
+        put("name", i.name)
+        put("tool", i.tool)
+        put("read", i.read)
+        put("status", i.status)
+        put("note", i.note)
+    }
+
+    /* The manifest is kept as the JSON we were given, not as objects —
+       re-encoding it would mean two places to keep the field list in
+       step, and the parser is already tolerant of missing keys. */
+    private fun encodeManifest(manifest: SiteManifest): String = JSONObject().apply {
+        put("manifestVersion", manifest.manifestVersion)
+        put("updated", manifest.updated)
+        put("minSupportedVersionCode", manifest.minSupportedVersionCode)
+        put("features", JSONObject().apply {
+            manifest.features.forEach { (k, v) -> put(k, v) }
+        })
+        put("tools", JSONArray().apply {
+            manifest.tools.forEach { t ->
+                put(JSONObject().apply {
+                    put("id", t.id)
+                    put("name", t.name)
+                    put("icon", t.icon)
+                    put("path", t.path)
+                    put("repoPath", t.repoPath)
+                    put("blurb", t.blurb)
+                })
+            }
+        })
+        put("pages", JSONArray().apply {
+            manifest.pages.forEach { p ->
+                put(JSONObject().apply {
+                    put("path", p.path)
+                    put("title", p.title)
+                    put("tool", p.tool)
+                    put("kind", p.kind)
+                })
+            }
+        })
+    }.toString()
 
     private fun parseReply(o: JSONObject) = Reply(
         id = o.optInt("id"),
@@ -213,7 +407,40 @@ class AdminClient(private val app: Context) {
         const val KEY_KEY = "key"
         const val KEY_PALETTE = "palette"
         const val KEY_LAST_SYNC = "lastSync"
+        const val KEY_SERVER_TIME = "serverTime"
+        const val KEY_API = "apiVersion"
+        const val KEY_MIN_SUPPORTED = "minSupported"
+
+        private const val CACHE_IDEAS = "ideas"
+        private const val CACHE_MANIFEST = "manifest"
+        private const val CACHE_USAGE = "usage"
     }
 }
 
 class AdminException(message: String) : Exception(message)
+
+/* ============================================================
+   Folding the delta read back into what we already have.
+
+   The backend returns only rows touched since the last sync; this is
+   the other half — overlay them on the cached list. A row that has
+   vanished from the sheet is not detectable this way (the sheet has no
+   deletions, and a deleted row keeps its neighbours' numbers stable
+   only until something below it moves), so a full read every so often
+   is what settles it.
+   ============================================================ */
+
+object IdeaMerger {
+
+    fun merge(cached: List<Idea>, delta: List<Idea>): List<Idea> {
+        if (delta.isEmpty()) return sort(cached)
+        val byId = cached.associateBy { it.id }.toMutableMap()
+        delta.forEach { byId[it.id] = it }
+        return sort(byId.values.toList())
+    }
+
+    /** Newest first. ISO-8601 sorts as text, so this is chronological
+        without parsing anything. */
+    fun sort(list: List<Idea>): List<Idea> =
+        list.sortedWith(compareByDescending<Idea> { it.whenIso }.thenByDescending { it.id })
+}

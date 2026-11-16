@@ -39,7 +39,11 @@ class SyncWorker(
         if (!client.isConfigured()) return@withContext Result.failure()
 
         try {
-            val ideas = client.ideas()
+            /* One read: the rows touched since the last sync, merged
+               onto the cache. Cheap in the normal case, and it keeps the
+               cache warm for the next launch. */
+            val known = client.cachedIdeas()
+            val ideas = client.syncChanges()
 
             /* Notified IDs: rows we have already pinged about. The
                first sync seeds this set without notifying. */
@@ -49,7 +53,8 @@ class SyncWorker(
             val fresh = if (firstSync) {
                 emptyList()
             } else {
-                ideas.filter { !it.read && !notified.contains(it.id) }
+                val knownIds = known.mapTo(HashSet()) { it.id }
+                ideas.filter { !it.read && !knownIds.contains(it.id) }
             }
 
             if (fresh.isNotEmpty()) {

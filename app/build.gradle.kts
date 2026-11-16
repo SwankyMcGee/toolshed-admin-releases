@@ -6,6 +6,20 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+/* Where the signing keystore lives. A Gradle property wins, then an
+   environment variable (what CI sets), then the checkout-local
+   default. Keeping it in one place means the release APK is signed the
+   same way on a laptop and in a workflow. */
+fun keystorePath(): String =
+    providers.gradleProperty("toolshedKeystore").orNull
+        ?: providers.environmentVariable("TOOLSHED_KEYSTORE").orNull
+        ?: "C:/Users/Tanner/Desktop/Toolshed App/toolshed-release.keystore"
+
+fun secret(envName: String, fallback: String): String =
+    providers.gradleProperty(envName.lowercase().replace('_', '.')).orNull
+        ?: providers.environmentVariable(envName).orNull
+        ?: fallback
+
 android {
     namespace = "com.learningtoolshed.admin"
     compileSdk = 35
@@ -14,16 +28,20 @@ android {
         applicationId = "com.learningtoolshed.admin"
         minSdk = 24
         targetSdk = 35
-    versionCode = 7
-    versionName = "1.6"
+    versionCode = 8
+    versionName = "1.7"
     }
 
     signingConfigs {
         create("release") {
-            storeFile = file("C:/Users/Tanner/Desktop/Toolshed App/toolshed-release.keystore")
-            storePassword = "toolshed123"
-            keyAlias = "toolshed"
-            keyPassword = "toolshed123"
+            /* Local builds use the keystore beside the project; CI passes
+               the same values in as Gradle properties or environment
+               variables, so the signing config has one definition and
+               two sources. */
+            storeFile = file(keystorePath())
+            storePassword = secret("TOOLSHED_KEYSTORE_PASSWORD", "toolshed123")
+            keyAlias = secret("TOOLSHED_KEY_ALIAS", "toolshed")
+            keyPassword = secret("TOOLSHED_KEY_PASSWORD", "toolshed123")
         }
     }
 
@@ -74,4 +92,9 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    /* The pure logic — Stats, UsageStats, the registry lookups — is
+       plain Kotlin with no Android in it, so it can be tested on the
+       JVM in a second rather than on a device. */
+    testImplementation("junit:junit:4.13.2")
 }

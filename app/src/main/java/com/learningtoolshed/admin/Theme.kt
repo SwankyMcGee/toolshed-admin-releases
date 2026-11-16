@@ -223,7 +223,10 @@ fun PillButton(
             .background(if (filled) c.accent else Color.Transparent)
             .border(1.dp, if (filled) c.accent else c.border, shape)
             .clickableNoRipple(onClick)
-            .heightIn(min = 44.dp)
+            /* 48dp is the Material minimum touch target. The text sits
+               in the middle, so the pill can be comfortably tapped
+               without looking oversized. */
+            .heightIn(min = 48.dp)
             .padding(horizontal = 18.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center
     ) {

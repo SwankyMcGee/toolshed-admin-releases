@@ -104,7 +104,10 @@ fun IdeaSheet(
     onSetStatus: (String) -> Unit,
     onSaveNote: (String) -> Unit,
     onSendReply: (String) -> Unit,
-    onShareReply: (String) -> Unit
+    onShareReply: (String) -> Unit,
+    /* The manifest can switch replies off (features.replies). The rest
+       of the sheet still works; only the thread is hidden. */
+    showReplies: Boolean = true
 ) {
     val c = MaterialTheme.toolshed
     var note by remember(idea.id) { mutableStateOf(idea.note) }
@@ -178,7 +181,7 @@ fun IdeaSheet(
 
         /* ---------- replies ---------- */
 
-        if (email != null) {
+        if (showReplies && email != null) {
             SectionHeader("Replies")
 
             if (loadingReplies) {

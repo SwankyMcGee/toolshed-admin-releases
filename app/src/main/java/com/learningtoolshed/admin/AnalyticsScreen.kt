@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,7 +13,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -28,8 +32,18 @@ import androidx.compose.ui.unit.dp
 /* ============================================================
    The analytics screen: "Overview."
 
-   A lazy list of cards, each one chart or number. Computed on-
+   A grid of cards. Each card is one chart or number, computed on-
    device from the ideas already in memory — no extra fetch.
+
+   The grid is adaptive: one column on a phone, two or three on a
+   tablet, with the intro and the footnotes spanning the full width.
+   Cards with charts are short enough that a second column doesn't
+   leave holes.
+
+   "Ideas per tool" has one row per tool in site-manifest.json, so a
+   new tool appears here on the next sync with no app release. Ideas
+   naming a tool the registry doesn't know get their own card at the
+   bottom — the same to-do list the Usage tab shows for unknown pages.
 
    v1 answers "what's in the inbox now". Status history (for
    "how fast do we close things") is in expanding_the_project.md.
@@ -38,19 +52,22 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun AnalyticsScreen(
     ideas: List<Idea>,
+    manifest: SiteManifest,
     onRefresh: () -> Unit
 ) {
-    val stats = remember(ideas) { Stats.of(ideas) }
+    val stats = remember(ideas, manifest) { Stats.of(ideas, manifest) }
     val c = MaterialTheme.toolshed
 
-    LazyColumn(
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 340.dp),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+        contentPadding = PaddingValues(
             start = 14.dp, end = 14.dp, top = 10.dp, bottom = 28.dp
         ),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -73,24 +90,12 @@ fun AnalyticsScreen(
 
         /* ---------- headline numbers ---------- */
 
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatCard(
-                    label = "Ideas",
-                    value = stats.total.toString(),
-                    modifier = Modifier.weight(1f)
-                )
-                StatCard(
-                    label = "Unread",
-                    value = stats.unread.toString(),
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
+        item { StatCard("Ideas", stats.total.toString()) }
+        item { StatCard("Unread", stats.unread.toString()) }
 
         /* ---------- ideas per week ---------- */
 
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             Card {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
@@ -114,7 +119,7 @@ fun AnalyticsScreen(
 
         /* ---------- tool vs feature ---------- */
 
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             Card {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
@@ -148,7 +153,7 @@ fun AnalyticsScreen(
 
         /* ---------- status breakdown ---------- */
 
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             Card {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
@@ -166,32 +171,13 @@ fun AnalyticsScreen(
             }
         }
 
-        /* ---------- top tools ---------- */
-
-        if (stats.topTools.isNotEmpty()) {
-            item {
-                Card {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            text = "Tools with the most feature ideas",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = c.text
-                        )
-                        HBars(
-                            data = stats.topTools,
-                            barColor = c.accent,
-                            trackColor = c.surface2,
-                            textColor = c.text
-                        )
-                    }
-                }
-            }
-        }
-
-        /* ---------- all ideas per tool (Tools hub) ---------- */
+        /* ---------- every tool in the registry ----------
+           Generated from the manifest. A zero row is deliberate: it
+           says nobody has asked for that tool yet, which is a
+           different fact from the tool not existing. */
 
         if (stats.byTool.isNotEmpty()) {
-            item {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 Card {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
@@ -200,7 +186,7 @@ fun AnalyticsScreen(
                             color = c.text
                         )
                         Text(
-                            text = "Every idea that names a tool, plus tool ideas that mention it.",
+                            text = "Every tool in the site registry, biggest first.",
                             style = MaterialTheme.typography.bodySmall,
                             color = c.dim
                         )
@@ -215,24 +201,27 @@ fun AnalyticsScreen(
             }
         }
 
-        /* ---------- feature ideas per resource page ---------- */
+        /* ---------- ideas naming a tool we don't know ----------
+           Either the site is missing a tool someone wants, or the
+           name in the form doesn't match the manifest. Both are
+           worth seeing, and neither should vanish. */
 
-        if (stats.byResource.isNotEmpty()) {
-            item {
-                Card {
+        if (stats.hasUnmapped) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Card(primary = true) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
-                            text = "Feature ideas per resource page",
+                            text = "Not in the registry",
                             style = MaterialTheme.typography.titleMedium,
                             color = c.text
                         )
                         Text(
-                            text = "Which tool's resources are being asked for — the closest the sheet gets to page-level analytics.",
+                            text = "These ideas name a tool the site doesn't list — either a tool someone is asking for, or a name that doesn't match site-manifest.json.",
                             style = MaterialTheme.typography.bodySmall,
                             color = c.dim
                         )
                         HBars(
-                            data = stats.byResource,
+                            data = stats.unmapped,
                             barColor = c.accent,
                             trackColor = c.surface2,
                             textColor = c.text
@@ -242,7 +231,7 @@ fun AnalyticsScreen(
             }
         }
 
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
             Text(
                 text = "Charts show what's in the inbox right now. For how fast ideas move from new to done, see the status-history note in expanding_the_project.md.",
                 style = MaterialTheme.typography.bodySmall,

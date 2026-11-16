@@ -85,6 +85,7 @@ fun ToolshedAppRoot(
     onSaveConnection: (String, String) -> Unit,
     onDismissMessage: () -> Unit,
     onLoadUsage: () -> Unit,
+    onLoadManifest: () -> Unit,
     /* Drawn above the navigation bar, in the layout rather than
        floating over it, so it can never cover the tabs. */
     banner: (@Composable () -> Unit)? = null
@@ -98,6 +99,10 @@ fun ToolshedAppRoot(
         openIdea?.id?.let(onLoadReplies)
     }
 
+    /* The site registry, once: bundled copy immediately, backend answer
+       when it arrives. Everything downstream reads state.manifest. */
+    LaunchedEffect(Unit) { onLoadManifest() }
+
     /* Usage rows are fetched the first time the tab is opened, then
        only when the user asks — visits accumulate slowly. */
     var usageLoaded by remember { mutableStateOf(false) }
@@ -106,6 +111,22 @@ fun ToolshedAppRoot(
             usageLoaded = true
             onLoadUsage()
         }
+    }
+
+    /* The tabs the manifest allows. A flag off means the screen isn't
+       offered at all, rather than opening onto an empty panel. */
+    val tabs = Tab.values().filter { candidate ->
+        when (candidate) {
+            Tab.Usage -> state.showUsage
+            Tab.Overview -> state.showAnalytics
+            Tab.Inbox -> true
+        }
+    }
+
+    /* If the tab we're on has been switched off from the backend, fall
+       back to the inbox rather than showing nothing. */
+    LaunchedEffect(tabs, tab) {
+        if (tab !in tabs) tab = Tab.Inbox
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -137,6 +158,7 @@ fun ToolshedAppRoot(
 
                 Tab.Overview -> AnalyticsScreen(
                     ideas = state.ideas,
+                    manifest = state.manifest,
                     onRefresh = onRefresh
                 )
 
@@ -160,6 +182,7 @@ fun ToolshedAppRoot(
         banner?.invoke()
 
         BottomTabs(
+            tabs = tabs,
             selected = tab,
             unread = state.unreadCount,
             onSelect = { tab = it }
@@ -175,7 +198,8 @@ fun ToolshedAppRoot(
             onSetStatus = { s -> onSetStatus(idea.id, s); openIdea = idea.copy(status = s) },
             onSaveNote = { n -> onSaveNote(idea.id, n) },
             onSendReply = { body -> onSendReply(idea.id, body) },
-            onShareReply = { body -> onShareReply(body) }
+            onShareReply = { body -> onShareReply(body) },
+            showReplies = state.showReplies
         )
     }
 
@@ -209,6 +233,7 @@ private fun InboxScreen(
     onOpenIdea: (Idea) -> Unit,
     onOpenSettings: () -> Unit
 ) {
+    val c = MaterialTheme.toolshed
     Column(modifier = Modifier.fillMaxSize()) {
         FilterRow(
             filters = state.filters,
@@ -220,6 +245,27 @@ private fun InboxScreen(
             onClearFilters = onClearFilters,
             onMarkAllRead = onMarkAllRead
         )
+
+        /* The backend has asked for a newer build. Say so once, at the
+           top, rather than letting an old app misread a newer shape. */
+        if (state.tooOld) {
+            Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+                Card(primary = true) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "This build is out of date",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = c.text
+                        )
+                        Text(
+                            text = "The Ideas Engine now needs a newer version of this app. Update from the releases page; everything you see here is the older format.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.dim
+                        )
+                    }
+                }
+            }
+        }
 
         when {
             state.load == LoadState.NotConfigured ->
@@ -255,16 +301,18 @@ private fun InboxScreen(
                     onAction = onClearFilters
                 )
 
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    start = 14.dp, end = 14.dp, top = 8.dp, bottom = 24.dp
-                ),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                item { MetaLine(state) }
-                items(state.visible, key = { it.id }) { idea ->
-                    IdeaCard(idea = idea, onClick = { onOpenIdea(idea) })
+            else -> WideContainer {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        start = 14.dp, end = 14.dp, top = 8.dp, bottom = 24.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    item { MetaLine(state) }
+                    items(state.visible, key = { it.id }) { idea ->
+                        IdeaCard(idea = idea, onClick = { onOpenIdea(idea) })
+                    }
                 }
             }
         }
@@ -352,13 +400,14 @@ private fun UnreadBadge(count: Int) {
 
 @Composable
 private fun BottomTabs(
+    tabs: List<Tab>,
     selected: Tab,
     unread: Int,
     onSelect: (Tab) -> Unit
 ) {
     val c = MaterialTheme.toolshed
     NavigationBar(containerColor = c.surface) {
-        Tab.values().forEach { tab ->
+        tabs.forEach { tab ->
             /* A dot on Inbox when there are unread ideas, so the
                count is visible from any tab without reading the
                title line. */

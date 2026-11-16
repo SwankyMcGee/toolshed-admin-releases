@@ -29,7 +29,9 @@ object Clock {
         }
     }
 
-    private fun parse(iso: String): Date? {
+    /** The ISO string from the sheet as epoch millis, or null when it
+        isn't a date at all. */
+    fun parse(iso: String): java.util.Date? {
         if (iso.isBlank()) return null
         return try {
             /* Trim a trailing Z and any fractional seconds; the sheet
