@@ -31,9 +31,13 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Unit tests
+      # The wrapper pins the Gradle version, so CI and a laptop build
+      # the same thing. Make it runnable on Linux.
+      - name: Make the wrapper executable
+        run: chmod +x gradlew
 
-        run: gradle testReleaseUnitTest --console=plain --no-daemon
+      - name: Unit tests
+        run: ./gradlew testReleaseUnitTest --console=plain
 
       - name: Upload test report
         if: always()
@@ -60,6 +64,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Make the wrapper executable
+        run: chmod +x gradlew
+
       # The keystore is a repository secret, decoded at build time. A
       # fork without it still gets the tests — only the signed APK is
       # skipped, rather than the whole workflow failing.
@@ -85,7 +92,7 @@ jobs:
           TOOLSHED_KEYSTORE_PASSWORD: ${{ secrets.TOOLSHED_KEYSTORE_PASSWORD }}
           TOOLSHED_KEY_ALIAS: ${{ secrets.TOOLSHED_KEY_ALIAS }}
           TOOLSHED_KEY_PASSWORD: ${{ secrets.TOOLSHED_KEY_PASSWORD }}
-        run: gradle assembleRelease --console=plain --no-daemon
+        run: ./gradlew assembleRelease --console=plain
 
       - name: Upload APK
         if: steps.keystore.outputs.have == 'true'
