@@ -5,6 +5,7 @@ import android.app.DownloadManager
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -26,6 +28,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -57,9 +60,31 @@ class MainActivity : ComponentActivity() {
                read straight from the ViewModel to keep one source. */
             var palette by remember { mutableStateOf(vm.paletteId) }
 
-            /* Update check: runs once on launch, quietly. If a newer
-               release exists, a banner appears; if not, nothing. */
+            /* Update check: on launch, and again whenever the refresh
+               button is pressed. A release published while the app is
+               open should be findable without force-quitting it. */
             var update by remember { mutableStateOf<UpdateInfo?>(null) }
+            var lastUpdateCheck by remember { mutableStateOf(0L) }
+            val scope = rememberCoroutineScope()
+
+            suspend fun fetchUpdate(): UpdateInfo? = withContext(Dispatchers.IO) {
+                UpdateChecker.check(BuildConfig.VERSION_CODE)
+            }
+
+            /* Refresh: the inbox, and a look for a newer build. Throttled,
+               because the GitHub releases API is unauthenticated and
+               allows 60 requests an hour per address — a run of
+               refreshes would otherwise spend them all. */
+            fun refresh() {
+                vm.refresh()
+                scope.launch {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastUpdateCheck < UPDATE_CHECK_GAP_MS) return@launch
+                    lastUpdateCheck = now
+                    val info = fetchUpdate()
+                    if (info != null) update = info
+                }
+            }
 
             /* A download is in flight. The banner's button clears itself
                when this is set, and a small card says what's happening. */
@@ -85,9 +110,10 @@ class MainActivity : ComponentActivity() {
             }
 
             LaunchedEffect(Unit) {
-                val info = withContext(Dispatchers.IO) {
-                    UpdateChecker.check(BuildConfig.VERSION_CODE)
-                }
+                /* Stamp before the call, so a refresh that lands while
+                   this one is in flight doesn't start a second. */
+                lastUpdateCheck = SystemClock.elapsedRealtime()
+                val info = fetchUpdate()
 
                 /* A download that finished while the app wasn't running
                    leaves an APK on disk. If an update is still on offer,
@@ -149,7 +175,7 @@ class MainActivity : ComponentActivity() {
                     onToggleUnread = vm::toggleUnread,
                     onToggleType = vm::toggleType,
                     onClearFilters = vm::clearFilters,
-                    onRefresh = vm::refresh,
+                    onRefresh = { refresh() },
                     onMarkRead = vm::markRead,
                     onMarkAllRead = vm::markAllRead,
                     onSetStatus = vm::setStatus,
@@ -229,5 +255,12 @@ class MainActivity : ComponentActivity() {
             putExtra(Intent.EXTRA_TEXT, body)
         }
         startActivity(Intent.createChooser(send, "Send reply"))
+    }
+
+    private companion object {
+        /* The GitHub releases API allows 60 unauthenticated requests an
+           hour per address. One check per launch is nothing; one per
+           refresh could be. */
+        const val UPDATE_CHECK_GAP_MS = 60_000L
     }
 }
