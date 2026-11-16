@@ -462,6 +462,13 @@ class InboxViewModel(app: Application) : AndroidViewModel(app) {
     private fun describe(err: Exception): String = when {
         err is AdminException && err.message == "forbidden" ->
             "The key was refused. Check it in Settings."
+        /* The server answered — with the one sentence an Ideas Engine
+           older than v5 says about a POST it doesn't route. Reads moved
+           from GET to POST in v5, so an older deployment accepts the
+           key and then has nothing to do with action=ideas or
+           action=usage. The redeploy is the fix; this is how you know. */
+        err is AdminException && err.message == "unknown action" ->
+            "The server is running an older Ideas Engine: it doesn't answer admin reads over POST. Redeploy the Apps Script — Deploy → Manage deployments → edit → New version → Deploy."
         err is java.net.UnknownHostException ->
             "No connection. Check the internet and try again."
         err is java.net.SocketTimeoutException ->
